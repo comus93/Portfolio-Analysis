@@ -123,6 +123,8 @@ ruff check portfolio_analysis/
 
 ## Git Commit Attribution
 
-All commits must be attributed to:
-- **Name:** Engineer Investor
-- **Email:** egr.investor@gmail.com
+This repository is a fork.
+
+Use the Git user name and email already configured in the development environment. Do not override commit authorship with the upstream author's identity.
+
+Preserve the upstream project's license and attribution in the repository.
