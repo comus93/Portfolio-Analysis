@@ -121,8 +121,11 @@ portfolio = PortfolioAnalysis(data, weights=[0.4, 0.3, 0.3])
 portfolio.print_summary()
 ```
 
-The Streamlit app also provides direct Korean code, date, weight, and benchmark
-inputs together with correlation, optimization, and efficient-frontier views.
+The Streamlit app searches Korean stocks and ETFs by code or name, shows the
+matching code/name/type list, and requires an explicit selection before adding a
+portfolio asset or benchmark. A six-digit-code quick-input mode remains available
+as a fallback if metadata search is unavailable. Date and weight inputs, correlation,
+optimization, and efficient-frontier views are also included.
 
 ### Optimization
 

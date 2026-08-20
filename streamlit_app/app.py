@@ -12,6 +12,7 @@ from portfolio_analysis import (
     BenchmarkComparison,
     DataLoader,
     KoreanDataLoader,
+    KoreanSecurityDirectory,
     MonteCarloSimulation,
     PortfolioAnalysis,
     PortfolioAnalysisError,
@@ -34,6 +35,94 @@ def fetch_market_data(
     if market == "Korea (FinanceDataReader)":
         return KoreanDataLoader(list(tickers), start_date, end_date).fetch_data()
     return DataLoader(list(tickers), start_date, end_date).fetch_data(progress=False)
+
+
+@st.cache_data(ttl=86400)
+def fetch_korean_security_catalog() -> pd.DataFrame:
+    """Fetch Korean stock/ETF metadata independently of price data."""
+    return KoreanSecurityDirectory().fetch_catalog()
+
+
+def security_label(security: dict) -> str:
+    """Format a security so code and name are always visible together."""
+    return f"{security['Code']} · {security['Name']} · {security['Type']}"
+
+
+def render_korean_security_search(prefix: str, title: str) -> dict | None:
+    """Render search, results, and explicit confirmation controls."""
+    st.markdown(f"**{title}**")
+    query = st.text_input(
+        "종목코드 또는 종목명",
+        key=f"{prefix}_query",
+        placeholder="예: 005930, 삼성전자, KODEX 200",
+    )
+    if st.button("검색", key=f"{prefix}_search"):
+        st.session_state.pop(f"{prefix}_result_choice", None)
+        try:
+            catalog = fetch_korean_security_catalog()
+            results = KoreanSecurityDirectory.search_catalog(catalog, query)
+            st.session_state[f"{prefix}_results"] = results.to_dict("records")
+            warnings = catalog.attrs.get("warnings", [])
+            if warnings:
+                st.warning(
+                    "일부 종목 목록을 불러오지 못했습니다: " + "; ".join(warnings)
+                )
+        except Exception as exc:
+            st.session_state[f"{prefix}_results"] = []
+            st.error(f"종목 검색을 사용할 수 없습니다: {exc}")
+            st.caption("사이드바의 6자리 코드 빠른 입력을 사용할 수 있습니다.")
+
+    records = st.session_state.get(f"{prefix}_results", [])
+    if not records:
+        if query and f"{prefix}_results" in st.session_state:
+            st.info("검색 결과가 없습니다.")
+        return None
+
+    results = pd.DataFrame(records)
+    st.dataframe(
+        results[["Code", "Name", "Type", "Market"]],
+        hide_index=True,
+        use_container_width=True,
+    )
+    by_code = {record["Code"]: record for record in records}
+    selected_code = st.selectbox(
+        "검색 결과에서 선택",
+        options=[""] + list(by_code),
+        index=0,
+        format_func=lambda code: (
+            "선택하세요" if not code else security_label(by_code[code])
+        ),
+        key=f"{prefix}_result_choice",
+    )
+    if st.button("선택 확정", key=f"{prefix}_confirm"):
+        if not selected_code:
+            st.warning("검색 결과 중 하나를 먼저 선택하세요.")
+            return None
+        return by_code[selected_code]
+    return None
+
+
+def remove_korean_portfolio_asset(code: str) -> None:
+    """Remove an asset and normalize the remaining percentage weights."""
+    selected_assets = st.session_state.get("korean_selected_assets", [])
+    remaining = [asset for asset in selected_assets if asset["Code"] != code]
+    st.session_state["korean_selected_assets"] = remaining
+    st.session_state.pop(f"korean_weight_{code}", None)
+
+    if not remaining:
+        return
+    values = np.array(
+        [
+            float(st.session_state.get(f"korean_weight_{asset['Code']}", 0.0))
+            for asset in remaining
+        ]
+    )
+    if np.isclose(values.sum(), 0.0):
+        values = np.full(len(remaining), 100.0 / len(remaining))
+    else:
+        values = values / values.sum() * 100.0
+    for asset, value in zip(remaining, values):
+        st.session_state[f"korean_weight_{asset['Code']}"] = float(value)
 
 
 def parse_portfolio(ticker_text: str, weight_text: str) -> tuple[list[str], np.ndarray]:
@@ -76,16 +165,108 @@ market = st.sidebar.selectbox(
 )
 
 if market == "Korea (FinanceDataReader)":
-    ticker_text = st.sidebar.text_input(
-        "6-digit ticker codes (comma-separated)",
-        "069500, 411060, 487240",
-        key="korean_tickers",
+    quick_input_mode = st.sidebar.checkbox(
+        "검색 장애 시 6자리 코드 빠른 입력 사용", key="korean_quick_input"
     )
-    weight_text = st.sidebar.text_input(
-        "Weights (fractions or percentages)", "40, 30, 30", key="korean_weights"
-    )
-    benchmark_default = "069500"
+
+    if quick_input_mode:
+        st.sidebar.warning(
+            "빠른 입력은 종목명을 확인하지 않습니다. 검색 기능을 사용할 수 없을 때만 권장합니다."
+        )
+        ticker_text = st.sidebar.text_input(
+            "6자리 종목코드 (쉼표로 구분)",
+            "069500, 411060, 487240",
+            key="korean_tickers",
+        )
+        weight_text = st.sidebar.text_input(
+            "비중 (합계 1.0 또는 100)", "40, 30, 30", key="korean_weights"
+        )
+        benchmark_ticker = st.sidebar.text_input(
+            "Benchmark 6자리 코드", "069500", key="korean_quick_benchmark"
+        ).strip()
+        benchmark_name = ""
+        display_names = {}
+    else:
+        st.session_state.setdefault("korean_selected_assets", [])
+        with st.sidebar.expander("포트폴리오 종목 검색·추가", expanded=True):
+            selected_security = render_korean_security_search(
+                "portfolio_security", "국내 주식/ETF 검색"
+            )
+            if selected_security is not None:
+                selected_assets = st.session_state["korean_selected_assets"]
+                if any(
+                    asset["Code"] == selected_security["Code"]
+                    for asset in selected_assets
+                ):
+                    st.warning("이미 포트폴리오에 추가된 종목입니다.")
+                else:
+                    selected_assets.append(selected_security)
+                    st.success(f"{security_label(selected_security)} 추가됨")
+
+        selected_assets = st.session_state["korean_selected_assets"]
+        st.sidebar.subheader("선택된 포트폴리오 종목")
+        st.sidebar.caption("각 종목 오른쪽에 비중(%)을 입력하고 ✕로 삭제합니다.")
+        weight_percentages: list[float] = []
+        if not selected_assets:
+            st.sidebar.info("검색 결과에서 종목을 선택하고 '선택 확정'을 누르세요.")
+        for asset in selected_assets:
+            label_column, weight_column, remove_column = st.sidebar.columns([5, 3, 1])
+            label_column.markdown(
+                f"**{asset['Code']}**  \n{asset['Name']} · {asset['Type']}"
+            )
+            weight_key = f"korean_weight_{asset['Code']}"
+            weight_default = (
+                {"value": 100.0 if len(selected_assets) == 1 else 0.0}
+                if weight_key not in st.session_state
+                else {}
+            )
+            weight_percentages.append(
+                weight_column.number_input(
+                    "비중 %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=1.0,
+                    key=weight_key,
+                    label_visibility="collapsed",
+                    **weight_default,
+                )
+            )
+            remove_column.button(
+                "✕",
+                key=f"remove_{asset['Code']}",
+                on_click=remove_korean_portfolio_asset,
+                args=(asset["Code"],),
+            )
+
+        st.session_state.setdefault("korean_selected_benchmark", None)
+        with st.sidebar.expander("Benchmark 검색·선택", expanded=True):
+            selected_benchmark = render_korean_security_search(
+                "benchmark_security", "국내 Benchmark 검색"
+            )
+            if selected_benchmark is not None:
+                st.session_state["korean_selected_benchmark"] = selected_benchmark
+                st.success(f"{security_label(selected_benchmark)} 선택됨")
+
+        benchmark_security = st.session_state["korean_selected_benchmark"]
+        if benchmark_security is None:
+            benchmark_ticker = ""
+            benchmark_name = ""
+            st.sidebar.info("Benchmark 검색 결과에서 종목을 명시적으로 선택하세요.")
+        else:
+            benchmark_ticker = benchmark_security["Code"]
+            benchmark_name = benchmark_security["Name"]
+            st.sidebar.markdown(
+                "**선택된 Benchmark**  \n" + security_label(benchmark_security)
+            )
+            if st.sidebar.button("Benchmark 선택 해제"):
+                st.session_state["korean_selected_benchmark"] = None
+                st.rerun()
+
+        tickers = [asset["Code"] for asset in selected_assets]
+        weights = np.array(weight_percentages, dtype=float) / 100.0
+        display_names = {asset["Code"]: asset["Name"] for asset in selected_assets}
 else:
+    quick_input_mode = True
     ticker_text = st.sidebar.text_input(
         "Tickers (comma-separated)", "VTI, VXUS, BND", key="yahoo_tickers"
     )
@@ -101,29 +282,53 @@ with date_columns[0]:
 with date_columns[1]:
     end_date = st.date_input("End", datetime.now())
 
-benchmark_ticker = (
-    st.sidebar.text_input(
-        "Benchmark ticker/code", benchmark_default, key=f"benchmark_{market}"
+if market == "Yahoo Finance":
+    benchmark_ticker = (
+        st.sidebar.text_input(
+            "Benchmark ticker/code", benchmark_default, key=f"benchmark_{market}"
+        )
+        .strip()
+        .upper()
     )
-    .strip()
-    .upper()
-)
+    benchmark_name = ""
+    display_names = {}
 risk_free_rate = st.sidebar.slider(
     "Risk-free rate", 0.0, 0.10, 0.03, 0.005, format="%.1f%%"
 )
 st.sidebar.caption("Weights may sum to 1.0 or 100. Not investment advice.")
 
+if not quick_input_mode and not tickers:
+    st.info("검색 결과에서 포트폴리오 종목을 하나 이상 선택하세요.")
+    st.stop()
+
 try:
     if start_date >= end_date:
         raise ValueError("Start date must be earlier than end date.")
-    tickers, weights = parse_portfolio(ticker_text, weight_text)
-    if market == "Korea (FinanceDataReader)" and (
-        not benchmark_ticker.isdigit() or len(benchmark_ticker) != 6
+    if quick_input_mode:
+        tickers, weights = parse_portfolio(ticker_text, weight_text)
+    elif not np.isclose(weights.sum(), 1.0):
+        raise ValueError(
+            f"선택 종목의 비중 합계가 100%여야 합니다 (현재 {weights.sum():.1%})."
+        )
+    if (
+        market == "Korea (FinanceDataReader)"
+        and benchmark_ticker
+        and (not benchmark_ticker.isdigit() or len(benchmark_ticker) != 6)
     ):
-        raise ValueError("The Korean benchmark must be a six-digit code.")
+        raise ValueError("국내 Benchmark는 6자리 코드여야 합니다.")
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
+
+display_labels = {
+    ticker: (
+        f"{ticker} · {display_names[ticker]}" if ticker in display_names else ticker
+    )
+    for ticker in tickers
+}
+benchmark_label = (
+    f"{benchmark_ticker} · {benchmark_name}" if benchmark_name else benchmark_ticker
+)
 
 st.title("Portfolio Analyzer")
 st.caption(f"Provider: {market} · {start_date} to {end_date}")
@@ -180,7 +385,11 @@ with performance_tab:
 
     allocation_column, return_column = st.columns([1, 2])
     with allocation_column:
-        allocation = px.pie(values=weights, names=tickers, hole=0.4)
+        allocation = px.pie(
+            values=weights,
+            names=[display_labels[ticker] for ticker in tickers],
+            hole=0.4,
+        )
         allocation.update_layout(margin=dict(t=20, b=20, l=0, r=0))
         st.plotly_chart(allocation, use_container_width=True)
     with return_column:
@@ -194,11 +403,16 @@ with performance_tab:
         st.plotly_chart(figure, use_container_width=True)
 
     st.subheader("Aligned Price Data")
-    st.line_chart(data / data.iloc[0])
+    st.line_chart((data / data.iloc[0]).rename(columns=display_labels))
 
 with correlation_tab:
     st.header("Daily Return Correlation Matrix")
-    correlation = data.pct_change().dropna().corr()
+    correlation = (
+        data.pct_change()
+        .dropna()
+        .corr()
+        .rename(index=display_labels, columns=display_labels)
+    )
     heatmap = px.imshow(
         correlation,
         text_auto=".2f",
@@ -226,6 +440,7 @@ with optimization_tab:
             weight_frame = pd.DataFrame.from_dict(
                 result["weights"], orient="index", columns=["Weight"]
             )
+            weight_frame = weight_frame.rename(index=display_labels)
             st.dataframe(weight_frame.style.format("{:.2%}"), use_container_width=True)
 
             st.subheader("Efficient Frontier")
@@ -245,8 +460,13 @@ with optimization_tab:
 
 with benchmark_tab:
     st.header("Benchmark Comparison")
-    st.write(f"Benchmark: **{benchmark_ticker}**")
-    if st.button("Compare to benchmark", type="primary"):
+    if benchmark_ticker:
+        st.write(f"Benchmark: **{benchmark_label}**")
+    else:
+        st.info(
+            "사이드바에서 Benchmark를 검색하고 결과를 확인한 뒤 '선택 확정'을 누르세요."
+        )
+    if st.button("Compare to benchmark", type="primary", disabled=not benchmark_ticker):
         try:
             benchmark_prices = fetch_market_data(
                 market,
