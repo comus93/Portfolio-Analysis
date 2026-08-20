@@ -19,6 +19,7 @@ from portfolio_analysis.constants import (
     DEFAULT_RISK_FREE_RATE,
     TRADING_DAYS_PER_YEAR,
 )
+from portfolio_analysis.data.korean import KoreanDataLoader
 from portfolio_analysis.data.loader import DataLoader
 from portfolio_analysis.exceptions import (
     ConfigurationError,
@@ -100,6 +101,7 @@ __all__ = [
     "ConfigurationError",
     # Core classes
     "DataLoader",
+    "KoreanDataLoader",
     "PerformanceMetrics",
     "BenchmarkComparison",
     "PortfolioAnalysis",

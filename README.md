@@ -51,6 +51,7 @@ streamlit run streamlit_app/app.py
 ### Core Analysis
 - **Performance Metrics**: Annual return, volatility, Sharpe ratio, Sortino ratio, max drawdown, VaR
 - **Portfolio Analysis**: Weighted returns, covariance-based volatility, cumulative returns
+- **Korean Market Data**: Six-digit Korean stock and ETF codes via FinanceDataReader
 - **Monte Carlo Simulation**: Project future portfolio values with confidence intervals
 - **Benchmark Comparison**: Alpha, beta, tracking error, information ratio, capture ratios
 
@@ -104,6 +105,24 @@ mc = MonteCarloSimulation(data, weights=[0.4, 0.2, 0.4], num_simulations=1000)
 mc.print_summary()
 mc.plot_simulation()
 ```
+
+### Korean Stocks and ETFs
+
+```python
+from portfolio_analysis import KoreanDataLoader, PortfolioAnalysis
+
+loader = KoreanDataLoader(
+    ["069500", "411060", "487240"],
+    "2024-01-01",
+    "2025-01-01",
+)
+data = loader.fetch_data()
+portfolio = PortfolioAnalysis(data, weights=[0.4, 0.3, 0.3])
+portfolio.print_summary()
+```
+
+The Streamlit app also provides direct Korean code, date, weight, and benchmark
+inputs together with correlation, optimization, and efficient-frontier views.
 
 ### Optimization
 

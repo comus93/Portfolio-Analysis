@@ -12,7 +12,7 @@ from portfolio_analysis.constants import (
     TRADING_DAYS_PER_YEAR,
     WEIGHT_SUM_TOLERANCE,
 )
-from portfolio_analysis.exceptions import ValidationError
+from portfolio_analysis.exceptions import DataError, ValidationError
 
 
 class BenchmarkComparison:
@@ -32,6 +32,9 @@ class BenchmarkComparison:
         Ticker symbol for benchmark
     risk_free_rate : float, default 0.02
         Annual risk-free rate for calculations
+    benchmark_data : pd.Series, optional
+        Preloaded benchmark prices. This allows non-Yahoo providers to reuse the
+        existing benchmark calculations.
 
     Examples
     --------
@@ -57,11 +60,13 @@ class BenchmarkComparison:
         weights: list[float],
         benchmark_ticker: str = "SPY",
         risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
+        benchmark_data: pd.Series | None = None,
     ):
         self.portfolio_data = portfolio_data
         self.weights = np.array(weights)
         self.benchmark_ticker = benchmark_ticker
         self.risk_free_rate = risk_free_rate
+        self._provided_benchmark_data = benchmark_data
 
         # Validate weights
         self._validate_weights()
@@ -69,6 +74,8 @@ class BenchmarkComparison:
         # Calculate portfolio returns
         returns = portfolio_data.pct_change().dropna()
         self.portfolio_returns = returns.dot(self.weights)
+
+        self._load_and_align_benchmark()
 
     def _validate_weights(self) -> None:
         """Validate that weights are valid for portfolio calculations."""
@@ -82,6 +89,9 @@ class BenchmarkComparison:
         if not np.isclose(weight_sum, 1.0, atol=WEIGHT_SUM_TOLERANCE):
             raise ValidationError(f"Weights must sum to 1.0, got {weight_sum:.6f}")
 
+    def _load_and_align_benchmark(self) -> None:
+        """Load benchmark prices and align returns to portfolio dates."""
+
         # Fetch benchmark data
         self.benchmark_data = self._fetch_benchmark()
         self.benchmark_returns = self.benchmark_data.pct_change().dropna()
@@ -93,8 +103,25 @@ class BenchmarkComparison:
         self.portfolio_returns = self.portfolio_returns.loc[common_dates]
         self.benchmark_returns = self.benchmark_returns.loc[common_dates]
 
+        if self.portfolio_returns.empty:
+            raise DataError("Portfolio and benchmark have no overlapping return dates.")
+
     def _fetch_benchmark(self) -> pd.Series:
         """Fetch benchmark price data."""
+        if self._provided_benchmark_data is not None:
+            benchmark = self._provided_benchmark_data.copy()
+            if isinstance(benchmark, pd.DataFrame):
+                if benchmark.shape[1] != 1:
+                    raise ValidationError(
+                        "Preloaded benchmark data must have exactly one column."
+                    )
+                benchmark = benchmark.iloc[:, 0]
+            benchmark.index = pd.to_datetime(benchmark.index).tz_localize(None)
+            benchmark = pd.to_numeric(benchmark, errors="coerce").dropna()
+            if benchmark.empty:
+                raise DataError("Preloaded benchmark price data is empty.")
+            return benchmark.sort_index()
+
         start_date = self.portfolio_data.index.min()
         end_date = self.portfolio_data.index.max()
 

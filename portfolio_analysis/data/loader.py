@@ -8,6 +8,8 @@ from typing import Union
 import pandas as pd
 import yfinance as yf
 
+from portfolio_analysis.exceptions import DataError, ValidationError
+
 
 class DataLoader:
     """
@@ -37,6 +39,13 @@ class DataLoader:
         self.tickers = tickers
         self.start_date = start_date
         self.end_date = end_date
+
+        if not tickers:
+            raise ValidationError("At least one ticker is required.")
+        if len(set(tickers)) != len(tickers):
+            raise ValidationError("Duplicate tickers are not allowed.")
+        if pd.Timestamp(start_date) >= pd.Timestamp(end_date):
+            raise ValidationError("Start date must be earlier than end date.")
 
     def fetch_data(self, progress: bool = True) -> pd.DataFrame:
         """
@@ -84,6 +93,16 @@ class DataLoader:
         # Handle single ticker case - ensure DataFrame format
         if isinstance(data, pd.Series):
             data = data.to_frame(name=self.tickers[0])
+
+        missing = [ticker for ticker in self.tickers if ticker not in data.columns]
+        if missing:
+            raise DataError("No price data returned for: " + ", ".join(missing))
+
+        data = data.loc[:, self.tickers].dropna()
+        if data.empty:
+            raise DataError(
+                "No overlapping price dates were returned for the requested tickers."
+            )
 
         return data
 

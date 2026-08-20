@@ -2,6 +2,7 @@ matplotlib==3.7.1
 numpy==1.25.2
 pandas==2.0.3
 yfinance==0.2.38
+finance-datareader>=0.9.94
 scipy>=1.7.0
 jinja2>=3.0.0
 pandas-datareader>=0.10.0

@@ -1,22 +1,39 @@
 # AI Share
 
 state: active
-id: 20260820T140000+0900-agent
-created_at: 2026-08-20T14:00:00+09:00
+id: 20260820T141000+0900-agent
+created_at: 2026-08-20T14:10:00+09:00
 type: result
 reply_to: none
 
+## Context
+
+Phase 1 was completed and pushed separately in commit `4ec58f2`: Python 3.12.13,
+199 existing tests passed, Streamlit health was `ok`, and Yahoo `SPY/BND`
+Performance, Max Sharpe, and Minimum Volatility E2E checks succeeded.
+
 ## Message
 
-Phase 1 baseline verification completed on `feat/korean-market-v1`.
+Korean market v1 implementation is complete on `feat/korean-market-v1`.
 
-- Python: 3.12.13
-- Environment: `uv venv --python 3.12 .venv`, then `uv pip install -e .[all]`
-- Existing tests: initially 184 passed / 15 failed; after minimal pandas 3 and Matplotlib compatibility fixes, 199 passed with 9 non-interactive-backend warnings
-- Streamlit: `streamlit run streamlit_app/app.py --server.headless true --server.port 8765`; `/_stcore/health` returned `ok`
-- Yahoo Finance E2E tickers and period: `SPY`, `BND`; 2024-01-01 through 2024-06-30; 124 aligned price rows
-- Portfolio Performance (weights 60%/40% in returned column order): annual return 12.20%, annual volatility 6.23%, Sharpe 1.637, max drawdown -3.56%
-- Max Sharpe: return 30.77%, volatility 10.70%, Sharpe 2.689
-- Minimum Volatility: return 3.68%, volatility 5.53%, Sharpe 0.304
-- Existing issues fixed: removed pandas 3-incompatible `M`/`Y` resample aliases in favor of offset objects; made Matplotlib legend labels/handles explicit
-- Blockers: none. Phase 2 may proceed.
+- Added `KoreanDataLoader`, backed by FinanceDataReader, with strict six-digit code validation, input-order preservation, common-date alignment, and ticker-specific error details.
+- Kept Yahoo Finance support and fixed `DataLoader` to preserve requested ticker order and report missing/non-overlapping data.
+- Extended `BenchmarkComparison` to accept preloaded provider-neutral benchmark prices while retaining the existing Yahoo path; also fixed its initialization order before date alignment.
+- Reworked the Streamlit UI to select Korea or Yahoo providers and directly enter tickers/codes, dates, weights (sum 1.0 or 100), and benchmark.
+- Added Streamlit views for Performance, daily-return Correlation Matrix, Max Sharpe, Minimum Volatility, Risk Parity, Efficient Frontier, and provider-matched Benchmark comparison. Existing Monte Carlo remains available.
+- Declared `finance-datareader` in package and Streamlit dependencies and documented Python usage.
+- Added 10 unit tests covering Korean validation/loading/alignment/errors, Yahoo input ordering, and preloaded Korean benchmark alignment.
+
+Verification:
+
+- Full suite: 209 passed, 9 expected non-interactive Matplotlib warnings.
+- Ruff: all checks passed (existing pyproject deprecation notice only).
+- Compile check: `python -m compileall -q portfolio_analysis streamlit_app` passed.
+- Streamlit server: started successfully; `/_stcore/health` returned `ok`.
+- Streamlit AppTest: Korean initial render, optimization action, benchmark action, and Yahoo provider render completed with zero exceptions/errors.
+- Live FDR E2E: `069500`, `411060`, `487240`, requested 2024-01-01 through 2025-01-01; 117 common rows from 2024-07-09 through 2024-12-30 (limited by common listing history).
+- Live Performance: annual return -7.58%, volatility 23.64%, Sharpe -0.405, max drawdown -16.82% for 40/30/30 weights.
+- Live optimization: Max Sharpe, Minimum Volatility, Risk Parity all returned valid weights; Efficient Frontier returned all 20 requested points.
+- Live benchmark: `069500` comparison aligned and returned finite beta/correlation and all benchmark metrics.
+
+Blockers: none.
