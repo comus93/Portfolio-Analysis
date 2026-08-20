@@ -117,7 +117,7 @@ def test_benchmark_comparison_accepts_preloaded_korean_prices():
     assert np.isfinite(metrics["correlation"])
 
 
-def test_benchmark_comparison_accepts_precomputed_benchmark_returns():
+def test_benchmark_comparison_accepts_composite_benchmark_index():
     dates = pd.date_range("2024-01-02", periods=6, freq="D")
     portfolio_data = pd.DataFrame(
         {
@@ -131,12 +131,18 @@ def test_benchmark_comparison_accepts_precomputed_benchmark_returns():
         index=dates[1:],
         name="benchmark_portfolio",
     )
+    benchmark_index = pd.concat(
+        [
+            pd.Series([1.0], index=[dates[0]]),
+            (1 + benchmark_returns).cumprod(),
+        ]
+    )
 
     comparison = BenchmarkComparison(
         portfolio_data,
         [0.6, 0.4],
         benchmark_ticker="Benchmark portfolio",
-        benchmark_returns=benchmark_returns,
+        benchmark_data=benchmark_index,
     )
     metrics = comparison.get_metrics()
 

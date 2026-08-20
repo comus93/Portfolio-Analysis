@@ -440,12 +440,18 @@ if st.sidebar.button("분석", type="primary", icon=":material/analytics:"):
                     benchmark_data, benchmark_weights.tolist()
                 )
                 benchmark_returns = benchmark_portfolio.calculate_portfolio_returns()
+                benchmark_index = pd.concat(
+                    [
+                        pd.Series([1.0], index=[benchmark_data.index.min()]),
+                        (1 + benchmark_returns).cumprod(),
+                    ]
+                )
                 benchmark_comparison = BenchmarkComparison(
                     data,
                     weights.tolist(),
                     benchmark_ticker="Benchmark portfolio",
                     risk_free_rate=risk_free_rate,
-                    benchmark_returns=benchmark_returns,
+                    benchmark_data=benchmark_index,
                 )
 
         st.session_state["analysis_result"] = {
