@@ -88,7 +88,8 @@ AttributeError: 'BenchmarkComparison' object has no attribute 'portfolio_returns
 
 공통 날짜가 전혀 없을 때는 `DataError`로 명확히 보고하도록 보강했다.
 
-수정 파일: `portfolio_analysis/metrics/benchmark.py`  
+수정 파일: `portfolio_analysis/metrics/benchmark.py`
+
 수정 커밋: `bbd1430` (`feat:korean-market-v1`)
 
 ## 4. Yahoo 다종목 조회 결과와 입력 비중의 종목 순서 불일치
