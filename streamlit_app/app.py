@@ -18,6 +18,12 @@ from portfolio_analysis import (
     PortfolioAnalysisError,
     PortfolioOptimizer,
 )
+from portfolio_analysis.local_portfolios import (
+    LocalPortfolioStore,
+    LocalPortfolioStoreError,
+    make_asset_records,
+    split_asset_records,
+)
 
 st.set_page_config(
     page_title="Portfolio Analyzer",
@@ -284,8 +290,171 @@ def optimization_result(optimizer: PortfolioOptimizer, strategy: str) -> dict:
     return methods[strategy]()
 
 
+def apply_saved_composition(
+    records: list[dict], list_key: str, weight_prefix: str
+) -> None:
+    """Copy a stored composition into editable Streamlit session state."""
+    assets, weights = split_asset_records(records)
+    for key in list(st.session_state):
+        if key.startswith(f"{weight_prefix}_"):
+            del st.session_state[key]
+    st.session_state[list_key] = assets
+    for asset, weight in zip(assets, weights):
+        st.session_state[f"{weight_prefix}_{asset['Code']}"] = weight * 100.0
+    # A load changes inputs only. It must never reuse or run an old analysis.
+    st.session_state.pop("analysis_result", None)
+
+
+def current_composition(list_key: str, weight_prefix: str) -> list[dict]:
+    """Build persistable records from the current editable selection."""
+    assets = st.session_state.get(list_key, [])
+    weights = [
+        float(st.session_state.get(f"{weight_prefix}_{asset['Code']}", 0.0))
+        / 100.0
+        for asset in assets
+    ]
+    return make_asset_records(assets, weights)
+
+
+def quick_input_composition(
+    ticker_text: str, weight_text: str, existing_assets: list[dict]
+) -> list[dict]:
+    """Convert valid quick-code input into the same persisted record format."""
+    tickers, weights = parse_portfolio(ticker_text, weight_text)
+    existing_by_code = {asset["Code"]: asset for asset in existing_assets}
+    assets = [
+        existing_by_code.get(
+            ticker,
+            {
+                "Code": ticker,
+                "Name": ticker,
+                "Type": "빠른 입력",
+                "Market": "KRX",
+            },
+        )
+        for ticker in tickers
+    ]
+    return make_asset_records(assets, weights.tolist())
+
+
+def load_preset_into_workspace(
+    records: list[dict], name: str, list_key: str, weight_prefix: str, target: str
+) -> None:
+    """Apply a preset in a pre-render button callback without running analysis."""
+    st.session_state["korean_quick_input"] = False
+    apply_saved_composition(records, list_key, weight_prefix)
+    st.session_state["korean_last_message"] = (
+        f"'{name}' Preset을 {target}로 불러왔습니다."
+    )
+
+
+def render_preset_manager(
+    store: LocalPortfolioStore,
+    document: dict,
+    portfolio_records: list[dict] | None,
+    benchmark_records: list[dict] | None,
+) -> None:
+    """Render named preset save/load/delete controls."""
+    with st.sidebar.expander("Portfolio Preset", expanded=False):
+        preset_names = sorted(document["presets"])
+        if preset_names:
+            selected_name = st.selectbox("저장된 Preset", preset_names)
+            load_portfolio, load_benchmark, delete = st.columns(3)
+            load_portfolio.button(
+                "Portfolio로",
+                use_container_width=True,
+                on_click=load_preset_into_workspace,
+                args=(
+                    document["presets"][selected_name],
+                    selected_name,
+                    "korean_selected_assets",
+                    "korean_weight",
+                    "Portfolio",
+                ),
+            )
+            load_benchmark.button(
+                "Benchmark로",
+                use_container_width=True,
+                on_click=load_preset_into_workspace,
+                args=(
+                    document["presets"][selected_name],
+                    selected_name,
+                    "korean_selected_benchmark_assets",
+                    "korean_benchmark_weight",
+                    "Benchmark",
+                ),
+            )
+            if delete.button("삭제", use_container_width=True):
+                try:
+                    store.delete_preset(selected_name)
+                    st.session_state["korean_last_message"] = (
+                        f"'{selected_name}' Preset을 삭제했습니다."
+                    )
+                    st.rerun()
+                except LocalPortfolioStoreError as exc:
+                    st.error(str(exc))
+        else:
+            st.caption("저장된 Preset이 없습니다.")
+
+        preset_name = st.text_input(
+            "Preset 이름", placeholder="예: 주식70금30", key="preset_name"
+        )
+        source = st.radio(
+            "저장할 현재 구성",
+            ["Portfolio", "Benchmark"],
+            horizontal=True,
+            key="preset_source",
+        )
+        st.caption("같은 이름으로 저장하면 기존 Preset을 덮어씁니다.")
+        if st.button("Preset 저장/갱신", use_container_width=True):
+            try:
+                if source == "Portfolio":
+                    records = portfolio_records
+                else:
+                    records = benchmark_records
+                if records is None:
+                    raise ValueError(
+                        "빠른 입력의 종목코드와 비중을 올바르게 입력한 뒤 저장하세요."
+                    )
+                store.save_preset(preset_name, records)
+                st.session_state["korean_last_message"] = (
+                    f"'{preset_name.strip()}' Preset을 저장했습니다."
+                )
+                st.rerun()
+            except (LocalPortfolioStoreError, ValueError) as exc:
+                st.error(str(exc))
+
+
 st.sidebar.title("Portfolio Analyzer")
 market = "Korea (FinanceDataReader)"
+portfolio_store = LocalPortfolioStore()
+store_available = True
+try:
+    store_document = portfolio_store.load()
+except LocalPortfolioStoreError as exc:
+    store_available = False
+    store_document = {
+        "version": 1,
+        "presets": {},
+        "last_session": {"portfolio": [], "benchmark": []},
+    }
+    st.sidebar.warning(str(exc))
+
+st.session_state.setdefault("korean_selected_assets", [])
+st.session_state.setdefault("korean_selected_benchmark_assets", [])
+if "local_workspace_restored" not in st.session_state:
+    apply_saved_composition(
+        store_document["last_session"]["portfolio"],
+        "korean_selected_assets",
+        "korean_weight",
+    )
+    apply_saved_composition(
+        store_document["last_session"]["benchmark"],
+        "korean_selected_benchmark_assets",
+        "korean_benchmark_weight",
+    )
+    st.session_state["local_workspace_restored"] = True
+
 quick_input_mode = st.sidebar.checkbox(
     "검색 장애 시 6자리 코드 빠른 입력 사용", key="korean_quick_input"
 )
@@ -316,8 +485,6 @@ if quick_input_mode:
         key="korean_quick_benchmark_weights",
     )
 else:
-    st.session_state.setdefault("korean_selected_assets", [])
-    st.session_state.setdefault("korean_selected_benchmark_assets", [])
     with st.sidebar.expander("포트폴리오 종목 검색·추가", expanded=True):
         selected_security = render_korean_security_search(
             "portfolio_security", "국내 주식/ETF 검색"
@@ -366,6 +533,54 @@ else:
     benchmark_display_names = {
         asset["Code"]: asset["Name"] for asset in benchmark_assets
     }
+
+if quick_input_mode:
+    try:
+        persistable_portfolio = quick_input_composition(
+            ticker_text,
+            weight_text,
+            st.session_state["korean_selected_assets"],
+        )
+        persistable_benchmark = (
+            quick_input_composition(
+                benchmark_text,
+                benchmark_weight_text,
+                st.session_state["korean_selected_benchmark_assets"],
+            )
+            if benchmark_text.strip()
+            else []
+        )
+    except ValueError:
+        persistable_portfolio = None
+        persistable_benchmark = None
+else:
+    persistable_portfolio = current_composition(
+        "korean_selected_assets", "korean_weight"
+    )
+    persistable_benchmark = current_composition(
+        "korean_selected_benchmark_assets", "korean_benchmark_weight"
+    )
+
+if store_available:
+    render_preset_manager(
+        portfolio_store,
+        store_document,
+        persistable_portfolio,
+        persistable_benchmark,
+    )
+    try:
+        current_session = {
+            "portfolio": persistable_portfolio,
+            "benchmark": persistable_benchmark,
+        }
+        if None not in current_session.values() and (
+            store_document["last_session"] != current_session
+        ):
+            portfolio_store.save_last_session(
+                persistable_portfolio, persistable_benchmark
+            )
+    except (LocalPortfolioStoreError, ValueError) as exc:
+        st.sidebar.warning(str(exc))
 
 st.sidebar.header("Analysis period")
 date_columns = st.sidebar.columns(2)

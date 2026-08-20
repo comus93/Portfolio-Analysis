@@ -127,6 +127,14 @@ portfolio asset or benchmark. A six-digit-code quick-input mode remains availabl
 as a fallback if metadata search is unavailable. Date and weight inputs, correlation,
 optimization, and efficient-frontier views are also included.
 
+Named presets can save a reusable multi-asset composition and apply it to either
+the analysis portfolio or the weighted benchmark portfolio. The latest editable
+portfolio and benchmark are restored automatically as the Last Session. On Windows,
+this metadata is stored in `%LOCALAPPDATA%\Portfolio-Analysis\portfolios.json`;
+prices, analysis results, dates, and risk-free rates are not persisted. Loading a
+preset or Last Session does not run an analysis—the sidebar **분석** button remains
+the explicit execution step.
+
 ### Optimization
 
 ```python
