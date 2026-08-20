@@ -112,7 +112,9 @@ class DataLoader:
         elif frequency == "weekly":
             returns = data.resample("W").last().pct_change().dropna()
         elif frequency == "monthly":
-            returns = data.resample("M").last().pct_change().dropna()
+            returns = (
+                data.resample(pd.offsets.MonthEnd()).last().pct_change().dropna()
+            )
         else:
             raise ValueError(f"Unknown frequency: {frequency}")
 

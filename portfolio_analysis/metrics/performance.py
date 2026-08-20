@@ -49,7 +49,7 @@ class PerformanceMetrics:
         float or pd.Series
             Annualized return(s)
         """
-        annual_return = data.resample("Y").last().pct_change().mean()
+        annual_return = data.resample(pd.offsets.YearEnd()).last().pct_change().mean()
         return annual_return
 
     @staticmethod

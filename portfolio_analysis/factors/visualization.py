@@ -84,7 +84,7 @@ class FactorVisualization:
 
         if show_significance:
             plt.legend(
-                ["p < 0.05 (significant)", "p >= 0.05"],
+                labels=["p < 0.05 (significant)", "p >= 0.05"],
                 handles=[
                     plt.Rectangle((0, 0), 1, 1, fc="green", alpha=0.8),
                     plt.Rectangle((0, 0), 1, 1, fc="gray", alpha=0.8),
