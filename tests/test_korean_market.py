@@ -115,3 +115,31 @@ def test_benchmark_comparison_accepts_preloaded_korean_prices():
     assert len(comparison.portfolio_returns) == 4
     assert np.isfinite(metrics["beta"])
     assert np.isfinite(metrics["correlation"])
+
+
+def test_benchmark_comparison_accepts_precomputed_benchmark_returns():
+    dates = pd.date_range("2024-01-02", periods=6, freq="D")
+    portfolio_data = pd.DataFrame(
+        {
+            "069500": [100, 101, 100, 103, 104, 105],
+            "411060": [100, 100, 102, 102, 103, 104],
+        },
+        index=dates,
+    )
+    benchmark_returns = pd.Series(
+        [0.01, -0.005, 0.012, 0.004, 0.006],
+        index=dates[1:],
+        name="benchmark_portfolio",
+    )
+
+    comparison = BenchmarkComparison(
+        portfolio_data,
+        [0.6, 0.4],
+        benchmark_ticker="Benchmark portfolio",
+        benchmark_returns=benchmark_returns,
+    )
+    metrics = comparison.get_metrics()
+
+    assert comparison.portfolio_returns.index.equals(benchmark_returns.index)
+    assert np.isfinite(metrics["beta"])
+    assert np.isfinite(metrics["tracking_error"])

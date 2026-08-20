@@ -35,6 +35,10 @@ class BenchmarkComparison:
     benchmark_data : pd.Series, optional
         Preloaded benchmark prices. This allows non-Yahoo providers to reuse the
         existing benchmark calculations.
+    benchmark_returns : pd.Series, optional
+        Precomputed benchmark returns. This allows composite benchmarks to reuse
+        the existing comparison metrics without forcing them through a price
+        series first.
 
     Examples
     --------
@@ -61,12 +65,14 @@ class BenchmarkComparison:
         benchmark_ticker: str = "SPY",
         risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
         benchmark_data: pd.Series | None = None,
+        benchmark_returns: pd.Series | None = None,
     ):
         self.portfolio_data = portfolio_data
         self.weights = np.array(weights)
         self.benchmark_ticker = benchmark_ticker
         self.risk_free_rate = risk_free_rate
         self._provided_benchmark_data = benchmark_data
+        self._provided_benchmark_returns = benchmark_returns
 
         # Validate weights
         self._validate_weights()
@@ -92,9 +98,15 @@ class BenchmarkComparison:
     def _load_and_align_benchmark(self) -> None:
         """Load benchmark prices and align returns to portfolio dates."""
 
-        # Fetch benchmark data
-        self.benchmark_data = self._fetch_benchmark()
-        self.benchmark_returns = self.benchmark_data.pct_change().dropna()
+        if self._provided_benchmark_returns is not None:
+            self.benchmark_data = None
+            self.benchmark_returns = self._normalize_benchmark_returns(
+                self._provided_benchmark_returns
+            )
+        else:
+            # Fetch benchmark data
+            self.benchmark_data = self._fetch_benchmark()
+            self.benchmark_returns = self.benchmark_data.pct_change().dropna()
 
         # Align dates
         common_dates = self.portfolio_returns.index.intersection(
@@ -105,6 +117,22 @@ class BenchmarkComparison:
 
         if self.portfolio_returns.empty:
             raise DataError("Portfolio and benchmark have no overlapping return dates.")
+
+    @staticmethod
+    def _normalize_benchmark_returns(benchmark_returns: pd.Series) -> pd.Series:
+        """Validate and normalize precomputed benchmark returns."""
+        returns = benchmark_returns.copy()
+        if isinstance(returns, pd.DataFrame):
+            if returns.shape[1] != 1:
+                raise ValidationError(
+                    "Precomputed benchmark returns must have exactly one column."
+                )
+            returns = returns.iloc[:, 0]
+        returns.index = pd.to_datetime(returns.index).tz_localize(None)
+        returns = pd.to_numeric(returns, errors="coerce").dropna()
+        if returns.empty:
+            raise DataError("Precomputed benchmark returns are empty.")
+        return returns.sort_index()
 
     def _fetch_benchmark(self) -> pd.Series:
         """Fetch benchmark price data."""
