@@ -188,8 +188,6 @@ def render_selected_assets(
             args=(list_key, weight_prefix, asset["Code"]),
         )
 
-    total_percentage = round(sum(weight_percentages), 2)
-    st.sidebar.caption(f"현재 비중 합계: {total_percentage:g}%")
     return selected_assets, np.array(weight_percentages, dtype=float) / 100.0
 
 
@@ -304,8 +302,13 @@ def apply_saved_composition(
 def current_composition(list_key: str, weight_prefix: str) -> list[dict]:
     """Build persistable records from the current editable selection."""
     assets = st.session_state.get(list_key, [])
+    default_weight = 100.0 if len(assets) == 1 else 0.0
     weights = [
-        float(st.session_state.get(f"{weight_prefix}_{asset['Code']}", 0.0))
+        float(
+            st.session_state.get(
+                f"{weight_prefix}_{asset['Code']}", default_weight
+            )
+        )
         / 100.0
         for asset in assets
     ]
@@ -316,6 +319,8 @@ def quick_input_composition(
     ticker_text: str, weight_text: str, existing_assets: list[dict]
 ) -> list[dict]:
     """Convert valid quick-code input into the same persisted record format."""
+    if not ticker_text.strip() and not weight_text.strip():
+        return []
     tickers, weights = parse_portfolio(ticker_text, weight_text)
     existing_by_code = {asset["Code"]: asset for asset in existing_assets}
     assets = [
@@ -333,92 +338,270 @@ def quick_input_composition(
     return make_asset_records(assets, weights.tolist())
 
 
-def load_preset_into_workspace(
-    records: list[dict], name: str, list_key: str, weight_prefix: str, target: str
+NO_PRESET = "Preset 선택 안 함"
+
+
+def workspace_weight_total(list_key: str, weight_prefix: str) -> float:
+    """Return the current percentage total before rendering the asset list."""
+    assets = st.session_state.get(list_key, [])
+    values = [
+        float(
+            st.session_state.get(
+                f"{weight_prefix}_{asset['Code']}",
+                100.0 if len(assets) == 1 else 0.0,
+            )
+        )
+        for asset in assets
+    ]
+    return round(sum(values), 2)
+
+
+def quick_weight_total(weight_text: str) -> float:
+    """Show the live quick-input total even while it is not yet valid."""
+    try:
+        values = [float(value.strip()) for value in weight_text.split(",")]
+    except ValueError:
+        return 0.0
+    total = sum(values)
+    if values and total <= 1.0 + 1e-9:
+        total *= 100.0
+    return round(total, 2)
+
+
+def select_workspace_preset(
+    presets: dict,
+    selector_key: str,
+    active_key: str,
+    list_key: str,
+    weight_prefix: str,
+    target: str,
 ) -> None:
-    """Apply a preset in a pre-render button callback without running analysis."""
+    """Load a preset only when a workspace selector actually changes."""
+    selected_name = st.session_state[selector_key]
+    if selected_name == NO_PRESET:
+        st.session_state[active_key] = None
+        return
+    records = presets.get(selected_name)
+    if records is None:
+        st.session_state[active_key] = None
+        st.session_state[selector_key] = NO_PRESET
+        st.session_state["korean_last_error"] = (
+            f"'{selected_name}' Preset을 찾을 수 없습니다."
+        )
+        return
     st.session_state["korean_quick_input"] = False
     apply_saved_composition(records, list_key, weight_prefix)
+    st.session_state[active_key] = selected_name
     st.session_state["korean_last_message"] = (
-        f"'{name}' Preset을 {target}로 불러왔습니다."
+        f"'{selected_name}' Preset을 {target}에 불러왔습니다."
     )
 
 
-def render_preset_manager(
+def clear_workspace(
+    list_key: str,
+    weight_prefix: str,
+    search_prefix: str,
+    active_key: str,
+    selector_key: str,
+    quick_keys: tuple[str, ...],
+) -> None:
+    """Clear one editable workspace without deleting any named preset."""
+    apply_saved_composition([], list_key, weight_prefix)
+    for key in list(st.session_state):
+        if search_prefix in key:
+            del st.session_state[key]
+    for key in quick_keys:
+        st.session_state[key] = ""
+    st.session_state[active_key] = None
+    st.session_state[selector_key] = NO_PRESET
+
+
+def request_preset_name(mode_key: str, mode: str) -> None:
+    """Reveal the compact name input for a new preset or Save As."""
+    st.session_state[mode_key] = mode
+
+
+def cancel_preset_name(mode_key: str, name_key: str) -> None:
+    """Close a pending naming flow."""
+    st.session_state[mode_key] = None
+    st.session_state[name_key] = ""
+
+
+def save_named_workspace(
+    store: LocalPortfolioStore,
+    records: list[dict] | None,
+    name_key: str,
+    mode_key: str,
+    active_key: str,
+    selector_key: str,
+) -> None:
+    """Save a workspace under a requested name and make it active."""
+    try:
+        if records is None:
+            raise ValueError(
+                "종목코드와 비중을 올바르게 입력한 뒤 저장하세요."
+            )
+        name = st.session_state.get(name_key, "").strip()
+        store.save_preset(name, records)
+        st.session_state[active_key] = name
+        st.session_state[selector_key] = name
+        st.session_state[mode_key] = None
+        st.session_state[name_key] = ""
+        st.session_state["korean_last_message"] = f"'{name}' Preset을 저장했습니다."
+    except (LocalPortfolioStoreError, ValueError) as exc:
+        st.session_state["korean_last_error"] = str(exc)
+
+
+def render_workspace_preset_controls(
     store: LocalPortfolioStore,
     document: dict,
-    portfolio_records: list[dict] | None,
-    benchmark_records: list[dict] | None,
+    target: str,
+    records: list[dict] | None,
+    total_percentage: float,
+    list_key: str,
+    weight_prefix: str,
+    search_prefix: str,
+    state_prefix: str,
+    quick_keys: tuple[str, ...] = (),
 ) -> None:
-    """Render named preset save/load/delete controls."""
-    with st.sidebar.expander("Portfolio Preset", expanded=False):
-        preset_names = sorted(document["presets"])
-        if preset_names:
-            selected_name = st.selectbox("저장된 Preset", preset_names)
-            load_portfolio, load_benchmark, delete = st.columns(3)
-            load_portfolio.button(
-                "Portfolio로",
-                width="stretch",
-                on_click=load_preset_into_workspace,
-                args=(
-                    document["presets"][selected_name],
-                    selected_name,
-                    "korean_selected_assets",
-                    "korean_weight",
-                    "Portfolio",
-                ),
-            )
-            load_benchmark.button(
-                "Benchmark로",
-                width="stretch",
-                on_click=load_preset_into_workspace,
-                args=(
-                    document["presets"][selected_name],
-                    selected_name,
-                    "korean_selected_benchmark_assets",
-                    "korean_benchmark_weight",
-                    "Benchmark",
-                ),
-            )
-            if delete.button("삭제", width="stretch"):
+    """Render one workspace's shared-library preset controls above its assets."""
+    active_key = f"{state_prefix}_active_preset"
+    selector_key = f"{state_prefix}_preset_selector"
+    mode_key = f"{state_prefix}_preset_name_mode"
+    name_key = f"{state_prefix}_preset_name"
+    preset_names = sorted(document["presets"])
+
+    active_name = st.session_state.setdefault(active_key, None)
+    if active_name not in preset_names:
+        st.session_state[active_key] = None
+        active_name = None
+    options = [NO_PRESET, *preset_names]
+    current_selector = st.session_state.get(selector_key)
+    if current_selector not in options:
+        st.session_state[selector_key] = active_name or NO_PRESET
+
+    st.sidebar.selectbox(
+        f"{target} Preset",
+        options,
+        key=selector_key,
+        on_change=select_workspace_preset,
+        args=(
+            document["presets"],
+            selector_key,
+            active_key,
+            list_key,
+            weight_prefix,
+            target,
+        ),
+    )
+
+    with st.sidebar.container(horizontal=True):
+        st.button(
+            "새 구성",
+            key=f"{state_prefix}_new_workspace",
+            on_click=clear_workspace,
+            args=(
+                list_key,
+                weight_prefix,
+                search_prefix,
+                active_key,
+                selector_key,
+                quick_keys,
+            ),
+        )
+        if st.button("저장", key=f"{state_prefix}_save"):
+            active_name = st.session_state.get(active_key)
+            if active_name:
                 try:
-                    store.delete_preset(selected_name)
+                    if records is None:
+                        raise ValueError(
+                            "종목코드와 비중을 올바르게 입력한 뒤 저장하세요."
+                        )
+                    store.save_preset(active_name, records)
                     st.session_state["korean_last_message"] = (
-                        f"'{selected_name}' Preset을 삭제했습니다."
+                        f"'{active_name}' Preset을 갱신했습니다."
                     )
                     st.rerun()
-                except LocalPortfolioStoreError as exc:
+                except (LocalPortfolioStoreError, ValueError) as exc:
                     st.error(str(exc))
-        else:
-            st.caption("저장된 Preset이 없습니다.")
+            else:
+                request_preset_name(mode_key, "new")
+    st.sidebar.button(
+        "다른 이름으로 저장",
+        key=f"{state_prefix}_save_as",
+        width="stretch",
+        on_click=request_preset_name,
+        args=(mode_key, "save_as"),
+    )
 
-        preset_name = st.text_input(
-            "Preset 이름", placeholder="예: 주식70금30", key="preset_name"
+    if st.session_state.get(mode_key):
+        prompt = (
+            "새 Preset 이름"
+            if st.session_state[mode_key] == "new"
+            else "다른 이름으로 저장"
         )
-        source = st.radio(
-            "저장할 현재 구성",
-            ["Portfolio", "Benchmark"],
-            horizontal=True,
-            key="preset_source",
+        st.sidebar.text_input(prompt, key=name_key, placeholder="Preset 이름")
+        with st.sidebar.container(horizontal=True):
+            st.button(
+                "확인",
+                key=f"{state_prefix}_confirm_name",
+                type="primary",
+                on_click=save_named_workspace,
+                args=(
+                    store,
+                    records,
+                    name_key,
+                    mode_key,
+                    active_key,
+                    selector_key,
+                ),
+            )
+            st.button(
+                "취소",
+                key=f"{state_prefix}_cancel_name",
+                on_click=cancel_preset_name,
+                args=(mode_key, name_key),
+            )
+
+    st.sidebar.caption(f"현재 비중 합계: {total_percentage:g}%")
+
+
+def delete_named_preset(
+    store: LocalPortfolioStore, name: str, workspace_prefixes: tuple[str, ...]
+) -> None:
+    """Delete a preset and detach workspaces while preserving their contents."""
+    try:
+        if store.delete_preset(name):
+            for prefix in workspace_prefixes:
+                active_key = f"{prefix}_active_preset"
+                if st.session_state.get(active_key) == name:
+                    st.session_state[active_key] = None
+                    st.session_state[f"{prefix}_preset_selector"] = NO_PRESET
+            st.session_state["korean_last_message"] = (
+                f"'{name}' Preset을 삭제했습니다. 현재 구성은 유지됩니다."
+            )
+    except LocalPortfolioStoreError as exc:
+        st.session_state["korean_last_error"] = str(exc)
+
+
+def render_preset_library_management(
+    store: LocalPortfolioStore, document: dict
+) -> None:
+    """Keep destructive preset deletion below the daily workspace controls."""
+    with st.sidebar.expander("Preset 관리", expanded=False):
+        preset_names = sorted(document["presets"])
+        if not preset_names:
+            st.caption("저장된 Preset이 없습니다.")
+            return
+        selected_name = st.selectbox(
+            "삭제할 Preset", preset_names, key="preset_delete_selector"
         )
-        st.caption("같은 이름으로 저장하면 기존 Preset을 덮어씁니다.")
-        if st.button("Preset 저장/갱신", width="stretch"):
-            try:
-                if source == "Portfolio":
-                    records = portfolio_records
-                else:
-                    records = benchmark_records
-                if records is None:
-                    raise ValueError(
-                        "빠른 입력의 종목코드와 비중을 올바르게 입력한 뒤 저장하세요."
-                    )
-                store.save_preset(preset_name, records)
-                st.session_state["korean_last_message"] = (
-                    f"'{preset_name.strip()}' Preset을 저장했습니다."
-                )
-                st.rerun()
-            except (LocalPortfolioStoreError, ValueError) as exc:
-                st.error(str(exc))
+        st.button(
+            "선택한 Preset 삭제",
+            key="delete_named_preset",
+            on_click=delete_named_preset,
+            args=(store, selected_name, ("portfolio_workspace", "benchmark_workspace")),
+        )
 
 
 st.sidebar.title("Portfolio Analyzer")
@@ -457,30 +640,125 @@ quick_input_mode = st.sidebar.checkbox(
 last_message = st.session_state.pop("korean_last_message", None)
 if last_message:
     st.sidebar.success(last_message)
+last_error = st.session_state.pop("korean_last_error", None)
+if last_error:
+    st.sidebar.error(last_error)
 
 if quick_input_mode:
-    st.sidebar.warning(
-        "빠른 입력은 검색 결과 확인을 생략합니다. 검색 기능을 사용할 수 없을 때만 권장합니다."
-    )
+    st.session_state.setdefault("korean_tickers", "069500, 411060, 487240")
+    st.session_state.setdefault("korean_weights", "40, 30, 30")
+    st.session_state.setdefault("korean_quick_benchmark", "069500")
+    st.session_state.setdefault("korean_quick_benchmark_weights", "100")
+
+    try:
+        persistable_portfolio = quick_input_composition(
+            st.session_state["korean_tickers"],
+            st.session_state["korean_weights"],
+            st.session_state["korean_selected_assets"],
+        )
+    except ValueError:
+        persistable_portfolio = None
+    try:
+        persistable_benchmark = quick_input_composition(
+            st.session_state["korean_quick_benchmark"],
+            st.session_state["korean_quick_benchmark_weights"],
+            st.session_state["korean_selected_benchmark_assets"],
+        )
+    except ValueError:
+        persistable_benchmark = None
+
+    st.sidebar.header("Portfolio")
+    if store_available:
+        render_workspace_preset_controls(
+            portfolio_store,
+            store_document,
+            "Portfolio",
+            persistable_portfolio,
+            quick_weight_total(st.session_state["korean_weights"]),
+            "korean_selected_assets",
+            "korean_weight",
+            "portfolio_security",
+            "portfolio_workspace",
+            ("korean_tickers", "korean_weights"),
+        )
+    else:
+        st.sidebar.caption(
+            "현재 비중 합계: "
+            f"{quick_weight_total(st.session_state['korean_weights']):g}%"
+        )
     ticker_text = st.sidebar.text_input(
-        "국내 종목코드 (쉼표로 구분)",
-        "069500, 411060, 487240",
-        key="korean_tickers",
+        "국내 종목코드 (쉼표로 구분)", key="korean_tickers"
     )
     weight_text = st.sidebar.text_input(
-        "비중 (합계 1.0 또는 100)", "40, 30, 30", key="korean_weights"
+        "비중 (합계 1.0 또는 100)", key="korean_weights"
     )
+
+    st.sidebar.header("Benchmark")
+    if store_available:
+        render_workspace_preset_controls(
+            portfolio_store,
+            store_document,
+            "Benchmark",
+            persistable_benchmark,
+            quick_weight_total(
+                st.session_state["korean_quick_benchmark_weights"]
+            ),
+            "korean_selected_benchmark_assets",
+            "korean_benchmark_weight",
+            "benchmark_security",
+            "benchmark_workspace",
+            ("korean_quick_benchmark", "korean_quick_benchmark_weights"),
+        )
+    else:
+        st.sidebar.caption(
+            "현재 비중 합계: "
+            f"{quick_weight_total(st.session_state['korean_quick_benchmark_weights']):g}%"
+        )
     benchmark_text = st.sidebar.text_input(
         "Benchmark 국내 종목코드 (쉼표로 구분)",
-        "069500",
         key="korean_quick_benchmark",
     )
     benchmark_weight_text = st.sidebar.text_input(
         "Benchmark 비중 (합계 1.0 또는 100)",
-        "100",
         key="korean_quick_benchmark_weights",
     )
+
+    try:
+        persistable_portfolio = quick_input_composition(
+            ticker_text,
+            weight_text,
+            st.session_state["korean_selected_assets"],
+        )
+        persistable_benchmark = quick_input_composition(
+            benchmark_text,
+            benchmark_weight_text,
+            st.session_state["korean_selected_benchmark_assets"],
+        )
+    except ValueError:
+        persistable_portfolio = None
+        persistable_benchmark = None
 else:
+    st.sidebar.header("Portfolio")
+    persistable_portfolio = current_composition(
+        "korean_selected_assets", "korean_weight"
+    )
+    if store_available:
+        render_workspace_preset_controls(
+            portfolio_store,
+            store_document,
+            "Portfolio",
+            persistable_portfolio,
+            workspace_weight_total("korean_selected_assets", "korean_weight"),
+            "korean_selected_assets",
+            "korean_weight",
+            "portfolio_security",
+            "portfolio_workspace",
+        )
+    else:
+        st.sidebar.caption(
+            "현재 비중 합계: "
+            f"{workspace_weight_total('korean_selected_assets', 'korean_weight'):g}%"
+        )
     with st.sidebar.expander("포트폴리오 종목 검색·추가", expanded=True):
         selected_security = render_korean_security_search(
             "portfolio_security", "국내 주식/ETF/ETN 검색"
@@ -499,6 +777,29 @@ else:
         "검색 결과에서 종목을 선택하고 '추가'를 누르세요.",
     )
 
+    st.sidebar.header("Benchmark")
+    persistable_benchmark = current_composition(
+        "korean_selected_benchmark_assets", "korean_benchmark_weight"
+    )
+    if store_available:
+        render_workspace_preset_controls(
+            portfolio_store,
+            store_document,
+            "Benchmark",
+            persistable_benchmark,
+            workspace_weight_total(
+                "korean_selected_benchmark_assets", "korean_benchmark_weight"
+            ),
+            "korean_selected_benchmark_assets",
+            "korean_benchmark_weight",
+            "benchmark_security",
+            "benchmark_workspace",
+        )
+    else:
+        st.sidebar.caption(
+            "현재 비중 합계: "
+            f"{workspace_weight_total('korean_selected_benchmark_assets', 'korean_benchmark_weight'):g}%"
+        )
     with st.sidebar.expander("Benchmark 검색·추가", expanded=True):
         selected_benchmark = render_korean_security_search(
             "benchmark_security", "국내 Benchmark 검색"
@@ -523,27 +824,6 @@ else:
     benchmark_display_names = {
         asset["Code"]: asset["Name"] for asset in benchmark_assets
     }
-
-if quick_input_mode:
-    try:
-        persistable_portfolio = quick_input_composition(
-            ticker_text,
-            weight_text,
-            st.session_state["korean_selected_assets"],
-        )
-        persistable_benchmark = (
-            quick_input_composition(
-                benchmark_text,
-                benchmark_weight_text,
-                st.session_state["korean_selected_benchmark_assets"],
-            )
-            if benchmark_text.strip()
-            else []
-        )
-    except ValueError:
-        persistable_portfolio = None
-        persistable_benchmark = None
-else:
     persistable_portfolio = current_composition(
         "korean_selected_assets", "korean_weight"
     )
@@ -552,12 +832,7 @@ else:
     )
 
 if store_available:
-    render_preset_manager(
-        portfolio_store,
-        store_document,
-        persistable_portfolio,
-        persistable_benchmark,
-    )
+    render_preset_library_management(portfolio_store, store_document)
     try:
         current_session = {
             "portfolio": persistable_portfolio,
