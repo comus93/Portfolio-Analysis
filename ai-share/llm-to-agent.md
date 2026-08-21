@@ -1,129 +1,117 @@
 # AI Share
 
 state: active
-id: 20260821T092600+0900-llm
-created_at: 2026-08-21T09:26:00+09:00
+id: 20260821T100100+0900-llm
+created_at: 2026-08-21T10:01:00+09:00
 type: request
-reply_to: 20260821T081937+0900-agent
+reply_to: 20260821T093818+0900-agent
 
 ## Context
 
-로컬 UAT 중 비교적 최근 상장된 국내 종목이 검색되지 않는 critical issue가 확인되었다.
+문자 포함 국내 종목코드 critical fix 완료 후 로컬 UAT를 계속 진행 중이다.
 
-재현 예:
-
-- `0137V0` · `KIWOOM 미국S&P500모멘텀`
-- `0172V0` · `Q 은액티브`
-
-현재 구현을 확인해보면 국내 종목코드를 숫자 6자리로만 가정하는 제약이 있다.
-
-- `KoreanSecurityDirectory._normalize_listing()`에서 `Code`를 `\d{6}`으로 필터링
-- `KoreanDataLoader.TICKER_PATTERN`이 `^\d{6}$`
-- Streamlit UI/빠른 입력/Benchmark validation 등에도 숫자-only 또는 "6자리 숫자" 전제가 있을 가능성이 있음
-
-이번 수정은 위 두 종목만 예외처리하는 것이 아니라, **국내 상장 주식/ETF/ETN의 실제 종목코드 체계에서 문자 포함 코드도 정상 지원하도록 숫자-only 가정 자체를 제거**하는 작업이다.
-
-AS-IS 구조를 최대한 재사용하고 최소 변경으로 해결한다.
+이번 요청은 분석 로직 변경이 아니라 **마이너 UX 개선 묶음**이다. AS-IS 구조를 최대한 유지하고 `streamlit_app/app.py` 중심의 최소 변경으로 처리해줘.
 
 ## Message
 
-### 1. 먼저 FinanceDataReader 원본 동작을 실측할 것
+### 1. 검색 결과 행 선택 시 별도 선택 메시지 제거
 
-코드를 수정하기 전에 현재 설치된 FinanceDataReader에서 아래를 직접 확인하고 결과를 `agent-to-llm.md`에 기록해줘.
+현재 검색 결과 표에서 한 행을 선택하면 아래와 같은 info/success 성격의 메시지가 나타난다.
 
-1. `StockListing("ETF/KR")`에서 `0137V0`, `0172V0`가 반환되는지
-2. `StockListing("KRX-DESC")` 등 현재 앱이 사용하는 관련 listing source에서 두 코드가 반환되는지
-3. ETN을 제공하는 FDR listing source가 무엇인지 확인하고, 문자 포함 ETN 코드가 실제로 어떤 형태로 반환되는지 샘플 확인
-4. `DataReader("0137V0", ...)`, `DataReader("0172V0", ...)`가 가격 데이터를 정상 반환하는지
-5. 기본 `DataReader`가 실패하는 경우에만 FDR이 지원하는 provider/source prefix 또는 다른 FDR 경로를 비교 테스트
+```text
+선택됨: 005930 · 삼성전자 · 주식
+```
 
-목적은 **종목 마스터(listing) 문제와 가격 데이터 문제를 분리해서 확인**하는 것이다.
+이 메시지는 제거한다.
 
-FDR source를 추측만으로 교체하지 말고 실제 호출 결과를 근거로 판단한다.
+- 선택 상태는 검색 결과 표의 행 강조만으로 충분하다.
+- 별도 `선택됨:` 메시지 영역을 만들지 않는다.
 
-### 2. 국내 종목코드의 숫자-only 가정을 앱 전체에서 제거
+### 2. 종목 추가 성공 메시지 제거
 
-repo 전체에서 아래와 같은 전제를 검색해서 확인한다.
+종목을 `[추가]`한 뒤 표시되는 다음과 같은 추가 성공 메시지도 제거한다.
 
-- `isdigit()`
-- `\d{6}` / `^\d{6}$`
-- "6자리 숫자"
-- 숫자형 ticker/code validation
-- 숫자-only를 전제로 한 zero-padding/normalization
+```text
+005930 · 삼성전자 · 주식 추가됨
+```
 
-국내 상장 주식/ETF/ETN의 실제 코드에서 영문자가 포함된 코드를 보존하고 정상 처리해야 한다.
+- 실제 선택된 Portfolio/Benchmark 종목 목록에 종목이 나타나는 것으로 충분하다.
+- 중복 추가, 잘못된 동작, 검색 실패 등 사용자가 대응해야 하는 warning/error는 유지할 수 있다.
 
-예:
+### 3. Portfolio / Benchmark 구성 비중 합계를 입력 단계에서 실시간 표시
 
-- 기존 숫자 코드: `005930`, `069500`
-- 문자 포함 코드: `0137V0`, `0172V0`
-- ETN도 실제 FDR listing에서 확인한 문자 포함 코드 샘플을 regression test에 포함
+분석 실행 전 구성 단계에서 현재 비중 합계를 바로 확인할 수 있게 한다.
 
-코드에 영문자가 있으면 대소문자 처리 때문에 다른 종목으로 취급되지 않도록 적절히 정규화하되, **실제 provider가 반환한 종목코드를 훼손하지 말 것**.
+대상:
 
-단순히 특정 regex 하나만 바꾸고 끝내지 말고 검색 → 추가 → 저장 → 가격 조회 → 분석까지 종목코드가 지나가는 경로를 확인한다.
+- 분석 Portfolio
+- Benchmark Portfolio
 
-### 3. 검색 카탈로그에 ETF/ETN이 실제 포함되도록 확인
+요구:
 
-현재 `KoreanSecurityDirectory`의 catalog source가 주식/ETF 중심이다.
-
-- ETF 문자 포함 코드가 catalog normalization 단계에서 버려지지 않게 수정
-- ETN listing source가 현재 catalog에 없다면 FDR에서 실제 제공되는 source를 확인한 뒤 **기존 catalog 구조를 최대한 유지하면서 필요한 최소 범위로 추가**
-- 검색 결과의 `Type`에는 주식/ETF/ETN을 구분할 수 있도록 기존 구조 안에서 반영
-- 중복 Code 처리 등 기존 동작은 유지
-
-새로운 종목 마스터 프레임워크나 별도 DB를 만들지 않는다.
-
-### 4. 가격 로더/분석 경로도 문자 포함 코드를 허용
-
-검색에서 종목을 찾을 수 있어도 `KoreanDataLoader`에서 거절되면 해결이 아니다.
-
-- 문자 포함 국내 종목코드를 가격 조회로 전달 가능해야 함
-- 기존 숫자 종목코드 동작 유지
-- Portfolio와 Benchmark 모두 동일하게 지원
-- Named Preset / Last Session에 저장된 문자 포함 코드도 정상 복원 및 분석 가능해야 함
-- 빠른 입력 모드가 유지된다면 문자 포함 코드도 입력/분석 가능해야 함
-
-실제 FDR 가격 조회가 특정 상품 유형에서 별도 source 표기를 요구한다면, 1단계 실측 결과를 근거로 AS-IS loader에 최소한의 대응을 추가한다.
-
-### 5. UI 문구 수정
-
-실제 제약이 숫자 6자리가 아니므로 사용자에게 잘못된 정보를 주는 문구를 수정한다.
+- 종목 추가 시 즉시 반영
+- 종목 삭제 시 즉시 반영
+- 각 종목 비중(%) 변경 시 즉시 반영
+- `[분석]` 버튼을 누르지 않아도 현재 구성 비중 합계가 보여야 한다.
 
 예:
 
-- `6자리 숫자 코드` → `종목코드` 또는 `국내 종목코드`
-- validation 오류 메시지도 숫자-only 표현 제거
+```text
+현재 비중 합계: 85%
+현재 비중 합계: 100%
+```
 
-기존 UI 구조 자체를 이번 critical fix 때문에 재설계하지 않는다.
+과도한 상태 UI를 추가하지 말고 현재 선택 종목/비중 UI 하단 등 자연스러운 위치에 간결하게 표시한다.
 
-### 6. 이번 작업에서 하지 않을 것
+### 4. Portfolio Performance의 Pie legend를 제거하고 별도 Allocation 표로 분리
 
-- `0137V0`, `0172V0`만 hard-code 예외처리
-- 신규 종목 목록을 수동으로 코드/CSV에 박아 넣기
-- 근거 없이 FDR을 버리고 별도 데이터 provider로 전환
-- 새로운 종목 master DB 구축
-- 분석 엔진 리팩터링
+현재 `Portfolio Performance`에서 allocation pie chart의 legend에 `코드 + 종목명`이 표시되면서, 종목 수가 많거나 종목명이 길 경우 legend가 pie chart 영역을 침범해 차트가 거의 보이지 않는 문제가 있다.
 
-먼저 FDR이 실제 데이터를 제공하는지 확인하고, 제공한다면 현재 앱의 잘못된 validation/filtering을 바로잡는 것이 우선이다.
+해결 방향은 **Pie + 별도 Allocation 표**로 확정한다.
 
-## Validation
+#### Pie chart
 
-최소 다음을 확인해줘.
+- 기존 allocation pie/donut chart는 유지한다.
+- Pie chart 내부/옆의 legend는 제거한다.
+- Pie chart가 충분한 크기로 보이도록 한다.
+- 기존 hover에서 종목 식별 및 비중을 확인할 수 있는 동작은 가능하면 유지한다.
 
-1. `005930` 검색/추가/가격 조회/분석 정상
-2. `069500` 검색/추가/가격 조회/분석 정상
-3. `0137V0`가 종목코드와 종목명으로 검색되고 추가 가능
-4. `0172V0`가 종목코드와 종목명으로 검색되고 추가 가능
-5. `0137V0`, `0172V0` 실제 가격 데이터 조회 및 분석 가능 여부 확인
-6. FDR listing에서 확인한 문자 포함 ETN 샘플도 검색/추가/가격 조회 가능 여부 확인
-7. Portfolio와 Benchmark 양쪽에서 문자 포함 코드 사용 가능
-8. 빠른 입력 모드에서도 문자 포함 코드 사용 가능
-9. 문자 포함 종목을 Named Preset으로 저장/불러오기 가능
-10. Last Session 자동 복원 후 동일 코드가 보존되고 분석 가능
-11. 기존 숫자-only 종목 회귀 없음
-12. 관련 unit/regression test 및 Streamlit 사용자 흐름 확인
+#### Allocation 표
 
-만약 FDR 자체가 특정 신규 ETF/ETN의 listing 또는 가격을 반환하지 못한다면, **어느 FDR source에서 무엇이 실패하는지 실측 결과를 먼저 보고하고**, 확인된 최소 fallback 방안을 구현하거나 blocker로 명확히 기록한다.
+Pie와 별도로 Portfolio 구성 정보를 읽을 수 있는 표를 표시한다.
 
-완료 후 `ai-share/PROTOCOL.md`에 따라 결과와 FDR 실측 내용을 `ai-share/agent-to-llm.md`에 기록하고 현재 작업 브랜치 `feat/korean-market-v1`에 commit/push해줘.
+최소 컬럼:
+
+- 종목코드
+- 종목명
+- 비중(%)
+
+예:
+
+```text
+Code    Name                         Weight
+005930  삼성전자                     30%
+0137V0  KIWOOM 미국S&P500모멘텀      25%
+0172V0  1Q 은액티브                  15%
+```
+
+기존 분석에 사용한 `tickers`, `weights`, 종목 표시 정보 등 AS-IS 데이터를 그대로 재사용하고, 이 표 때문에 새 분석 데이터 모델을 만들지 않는다.
+
+표의 위치는 현재 `Portfolio Performance` 레이아웃을 크게 깨지 않는 범위에서 Pie 아래 또는 인접 영역 중 가독성이 좋은 쪽으로 판단해도 된다.
+
+## Scope / Validation
+
+- 분석 엔진, 가격 데이터 로더, 최적화/Benchmark 계산 로직은 변경하지 않는다.
+- 이번 요청은 Streamlit UX 표현 개선 범위로 제한한다.
+- 기존 Portfolio/Benchmark 종목 추가·삭제·비중 변경·분석 흐름은 유지한다.
+- 최소 다음을 확인한다.
+  1. 검색 결과 행 선택 시 `선택됨:` 메시지가 더 이상 나오지 않음
+  2. `[추가]` 성공 후 `추가됨` 메시지가 더 이상 나오지 않음
+  3. Portfolio 비중 합계가 추가/삭제/수정 즉시 갱신됨
+  4. Benchmark 비중 합계도 동일하게 즉시 갱신됨
+  5. Performance Pie에 긴 legend가 표시되지 않음
+  6. Allocation 표에 Code + Name + Weight(%)가 정확히 표시됨
+  7. 종목이 많고 종목명이 길어도 Pie chart가 충분히 보임
+  8. `[분석]` 수동 실행 원칙 및 기존 분석 결과는 정상 유지
+
+관련 테스트/Streamlit AppTest를 필요한 범위에서 보완하고, 완료 결과는 `ai-share/PROTOCOL.md`에 따라 `ai-share/agent-to-llm.md`에 기록하여 현재 작업 브랜치 `feat/korean-market-v1`에 commit/push해줘.
