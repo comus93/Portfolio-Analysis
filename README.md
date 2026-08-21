@@ -51,7 +51,7 @@ streamlit run streamlit_app/app.py
 ### Core Analysis
 - **Performance Metrics**: Annual return, volatility, Sharpe ratio, Sortino ratio, max drawdown, VaR
 - **Portfolio Analysis**: Weighted returns, covariance-based volatility, cumulative returns
-- **Korean Market Data**: Six-digit Korean stock and ETF codes via FinanceDataReader
+- **Korean Market Data**: Numeric and alphanumeric KRX stock, ETF, and ETN codes
 - **Monte Carlo Simulation**: Project future portfolio values with confidence intervals
 - **Benchmark Comparison**: Alpha, beta, tracking error, information ratio, capture ratios
 
@@ -106,7 +106,7 @@ mc.print_summary()
 mc.plot_simulation()
 ```
 
-### Korean Stocks and ETFs
+### Korean stocks, ETFs, and ETNs
 
 ```python
 from portfolio_analysis import KoreanDataLoader, PortfolioAnalysis
@@ -121,9 +121,9 @@ portfolio = PortfolioAnalysis(data, weights=[0.4, 0.3, 0.3])
 portfolio.print_summary()
 ```
 
-The Streamlit app searches Korean stocks and ETFs by code or name, shows the
+The Streamlit app searches Korean stocks, ETFs, and ETNs by code or name, shows the
 matching code/name/type list, and requires an explicit selection before adding a
-portfolio asset or benchmark. A six-digit-code quick-input mode remains available
+portfolio asset or benchmark. A Korean-code quick-input mode remains available
 as a fallback if metadata search is unavailable. Date and weight inputs, correlation,
 optimization, and efficient-frontier views are also included.
 

@@ -9,21 +9,31 @@ import pandas as pd
 
 from portfolio_analysis.exceptions import DataError, ValidationError
 
+KOREAN_TICKER_PATTERN = re.compile(r"^\d{4}[0-9A-HJ-NP-TV-Z][0-9KLMN]$")
+
+
+def normalize_korean_ticker(ticker: object) -> str:
+    """Normalize a KRX short code without altering its six-character form."""
+    return str(ticker).strip().upper()
+
+
+def is_valid_korean_ticker(ticker: object) -> bool:
+    """Return whether a value follows the current KRX short-code format."""
+    return KOREAN_TICKER_PATTERN.fullmatch(normalize_korean_ticker(ticker)) is not None
+
 
 class KoreanDataLoader:
-    """Fetch aligned closing prices for Korean-listed stocks and ETFs.
+    """Fetch aligned closing prices for Korean-listed stocks, ETFs, and ETNs.
 
     Parameters
     ----------
     tickers : list of str
-        Six-digit Korean security codes.
+        Six-character Korean security codes, including alphanumeric codes.
     start_date, end_date : str or datetime
         Requested analysis period.
     reader : callable, optional
         FinanceDataReader-compatible callable. Primarily useful for tests.
     """
-
-    TICKER_PATTERN = re.compile(r"^\d{6}$")
 
     def __init__(
         self,
@@ -32,7 +42,7 @@ class KoreanDataLoader:
         end_date: Union[str, datetime],
         reader: Callable | None = None,
     ):
-        self.tickers = [str(ticker).strip() for ticker in tickers]
+        self.tickers = [normalize_korean_ticker(ticker) for ticker in tickers]
         self.start_date = pd.Timestamp(start_date)
         self.end_date = pd.Timestamp(end_date)
         self._reader = reader
@@ -44,11 +54,11 @@ class KoreanDataLoader:
         invalid = [
             ticker
             for ticker in self.tickers
-            if not self.TICKER_PATTERN.fullmatch(ticker)
+            if not is_valid_korean_ticker(ticker)
         ]
         if invalid:
             raise ValidationError(
-                "Korean ticker codes must contain exactly six digits: "
+                "Korean ticker codes must be valid six-character KRX codes: "
                 + ", ".join(invalid)
             )
         if len(set(self.tickers)) != len(self.tickers):

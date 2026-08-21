@@ -1,14 +1,17 @@
-"""Searchable Korean stock and ETF metadata, separate from price loading."""
+"""Searchable Korean stock, ETF, and ETN metadata, separate from prices."""
 
+import json
 from collections.abc import Callable
+from urllib.request import urlopen
 
 import pandas as pd
 
+from portfolio_analysis.data.korean import is_valid_korean_ticker
 from portfolio_analysis.exceptions import DataError
 
 
 class KoreanSecurityDirectory:
-    """Load and search Korean-listed stock and ETF metadata.
+    """Load and search Korean-listed stock, ETF, and ETN metadata.
 
     The directory performs literal code/name substring matching only. It never
     infers or selects a security on behalf of a caller.
@@ -21,6 +24,7 @@ class KoreanSecurityDirectory:
     """
 
     COLUMNS = ["Code", "Name", "Type", "Market"]
+    ETN_LISTING_URL = "https://finance.naver.com/api/sise/etnItemList.nhn"
 
     def __init__(self, listing_reader: Callable | None = None):
         self._listing_reader = listing_reader
@@ -47,9 +51,12 @@ class KoreanSecurityDirectory:
                 "Listing response is missing columns: " + ", ".join(missing)
             )
 
+        codes = listing[code_column].astype(str).str.strip().str.upper()
+        numeric_codes = codes.str.fullmatch(r"\d{1,6}")
+        codes = codes.where(~numeric_codes, codes.str.zfill(6))
         normalized = pd.DataFrame(
             {
-                "Code": listing[code_column].astype(str).str.strip().str.zfill(6),
+                "Code": codes,
                 "Name": listing["Name"].astype(str).str.strip(),
                 "Type": security_type,
                 "Market": (
@@ -59,18 +66,42 @@ class KoreanSecurityDirectory:
                 ),
             }
         )
-        valid = normalized["Code"].str.fullmatch(r"\d{6}") & normalized["Name"].ne("")
+        valid = normalized["Code"].map(is_valid_korean_ticker) & normalized[
+            "Name"
+        ].ne("")
         return normalized.loc[valid, KoreanSecurityDirectory.COLUMNS]
 
+    @classmethod
+    def _fetch_etn_listing(cls) -> pd.DataFrame:
+        """Load ETNs from the Naver listing family used by FDR for Korean ETFs."""
+        try:
+            with urlopen(cls.ETN_LISTING_URL, timeout=15) as response:
+                payload = json.loads(response.read().decode("euc-kr"))
+            items = payload["result"]["etnItemList"]
+        except Exception as exc:
+            raise DataError(f"ETN listing unavailable: {exc}") from exc
+        return pd.DataFrame(
+            {
+                "Symbol": [item.get("itemcode", "") for item in items],
+                "Name": [item.get("itemname", "") for item in items],
+                "Market": "KRX",
+            }
+        )
+
+    def _read_listing(self, market: str) -> pd.DataFrame:
+        if market == "ETN/KR" and self._listing_reader is None:
+            return self._fetch_etn_listing()
+        return self._get_listing_reader()(market)
+
     def fetch_catalog(self) -> pd.DataFrame:
-        """Fetch and normalize listed-company and ETF metadata."""
-        reader = self._get_listing_reader()
+        """Fetch and normalize listed-company, ETF, and ETN metadata."""
         frames: list[pd.DataFrame] = []
         failures: list[str] = []
 
-        for market, security_type in (("KRX-DESC", "주식"), ("ETF/KR", "ETF")):
+        sources = (("KRX-DESC", "주식"), ("ETF/KR", "ETF"), ("ETN/KR", "ETN"))
+        for market, security_type in sources:
             try:
-                listing = reader(market)
+                listing = self._read_listing(market)
                 if listing is None or listing.empty:
                     raise DataError("no rows returned")
                 frames.append(self._normalize_listing(listing, security_type))
@@ -85,8 +116,8 @@ class KoreanSecurityDirectory:
         catalog = pd.concat(frames, ignore_index=True)
         if catalog.empty:
             raise DataError("Korean security metadata did not contain usable rows.")
-        # The ETF listing is appended last and is the authoritative type source
-        # when a provider happens to include an ETF in both listings.
+        # Specialized product listings are authoritative when a provider also
+        # happens to include the same code in a general stock listing.
         catalog = catalog.drop_duplicates(subset="Code", keep="last")
         catalog = catalog.sort_values(["Name", "Code"], kind="stable").reset_index(
             drop=True
@@ -105,14 +136,15 @@ class KoreanSecurityDirectory:
         if not set(KoreanSecurityDirectory.COLUMNS).issubset(catalog.columns):
             raise DataError("Korean security catalog has an invalid schema.")
 
-        code = catalog["Code"].astype(str)
+        code = catalog["Code"].astype(str).str.upper()
         name = catalog["Name"].astype(str)
+        normalized_query = query.upper()
         folded_query = query.casefold()
         folded_name = name.str.casefold()
 
-        matches = code.str.contains(query, regex=False) | folded_name.str.contains(
-            folded_query, regex=False
-        )
+        matches = code.str.contains(
+            normalized_query, regex=False
+        ) | folded_name.str.contains(folded_query, regex=False)
         results = catalog.loc[matches, KoreanSecurityDirectory.COLUMNS].copy()
         if results.empty:
             return results
@@ -121,9 +153,9 @@ class KoreanSecurityDirectory:
         result_name = results["Name"].astype(str).str.casefold()
         results["_priority"] = 4
         results.loc[result_name.str.startswith(folded_query), "_priority"] = 3
-        results.loc[result_code.str.startswith(query), "_priority"] = 2
+        results.loc[result_code.str.startswith(normalized_query), "_priority"] = 2
         results.loc[result_name.eq(folded_query), "_priority"] = 1
-        results.loc[result_code.eq(query), "_priority"] = 0
+        results.loc[result_code.eq(normalized_query), "_priority"] = 0
 
         return (
             results.sort_values(["_priority", "Name", "Code"], kind="stable")

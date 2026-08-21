@@ -34,10 +34,35 @@ class TestKoreanDataLoader:
         assert len(data) == 3
         assert data.index.min() == pd.Timestamp("2024-01-03")
 
-    @pytest.mark.parametrize("ticker", ["69500", "ABCDEF", "069500.KS", ""])
-    def test_rejects_non_six_digit_codes(self, ticker):
-        with pytest.raises(ValidationError, match="six digits"):
+    @pytest.mark.parametrize(
+        "ticker", ["69500", "ABCDEF", "069500.KS", "0137I0", ""]
+    )
+    def test_rejects_invalid_krx_codes(self, ticker):
+        with pytest.raises(ValidationError, match="six-character KRX"):
             KoreanDataLoader([ticker], "2024-01-01", "2024-02-01")
+
+    @pytest.mark.parametrize("ticker", ["005930", "069500", "0137V0", "0172V0"])
+    def test_accepts_numeric_and_alphanumeric_krx_codes(self, ticker):
+        loader = KoreanDataLoader([ticker], "2024-01-01", "2024-02-01")
+
+        assert loader.tickers == [ticker]
+
+    def test_normalizes_alphanumeric_code_before_price_lookup(self):
+        requested = []
+
+        def reader(ticker, start, end):
+            requested.append(ticker)
+            return pd.DataFrame(
+                {"Close": [100, 101]},
+                index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            )
+
+        data = KoreanDataLoader(
+            ["0137v0"], "2024-01-01", "2024-02-01", reader=reader
+        ).fetch_data()
+
+        assert requested == ["0137V0"]
+        assert list(data.columns) == ["0137V0"]
 
     def test_rejects_invalid_date_range(self):
         with pytest.raises(ValidationError, match="earlier"):

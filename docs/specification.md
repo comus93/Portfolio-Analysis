@@ -2,7 +2,7 @@
 
 ## 1. 목적
 
-이 프로젝트는 `engineerinvestor/Portfolio-Analysis`를 fork하여 국내 상장 주식/ETF를 분석할 수 있도록 확장한다.
+이 프로젝트는 `engineerinvestor/Portfolio-Analysis`를 fork하여 국내 상장 주식/ETF/ETN을 분석할 수 있도록 확장한다.
 
 새로운 포트폴리오 분석 엔진을 처음부터 다시 만드는 것이 목적이 아니다.
 
@@ -85,7 +85,7 @@ Phase 1 검증 결과는 `ai-share/PROTOCOL.md`에 따라 `ai-share/agent-to-llm
 
 ### 4.1 기본 방향
 
-국내 상장 주식과 ETF의 가격 데이터를 FinanceDataReader(FDR)를 통해 사용할 수 있도록 기존 데이터 계층을 확장한다.
+국내 상장 주식, ETF, ETN의 가격 데이터를 FinanceDataReader(FDR)를 통해 사용할 수 있도록 기존 데이터 계층을 확장한다.
 
 가능한 경우 기존 분석 엔진, 최적화 로직, 시각화 로직, Streamlit 구조는 그대로 재사용한다.
 
@@ -97,8 +97,8 @@ Phase 1 검증 결과는 `ai-share/PROTOCOL.md`에 따라 `ai-share/agent-to-llm
 
 필수 요구사항:
 
-- FinanceDataReader를 사용해 국내 상장 주식과 국내 상장 ETF의 가격 데이터를 조회할 수 있어야 한다.
-- 입력 종목은 국내 6자리 종목코드를 기준으로 한다.
+- FinanceDataReader를 사용해 국내 상장 주식, ETF, ETN의 가격 데이터를 조회할 수 있어야 한다.
+- 입력 종목은 숫자 또는 영문자가 포함될 수 있는 국내 6자리 종목코드를 기준으로 한다.
 - 사용자가 시작일과 종료일을 지정할 수 있어야 한다.
 - 여러 종목의 가격 데이터를 동일 기간 기준으로 분석에 사용할 수 있어야 한다.
 - 데이터 누락이나 조회 실패 시 사용자에게 원인을 이해할 수 있는 오류를 보여준다.
@@ -154,7 +154,7 @@ Streamlit 웹 UI에서 최소한 다음 항목을 직접 입력할 수 있어야
 
 ### 4.7 Benchmark 비교
 
-사용자가 국내 종목코드 또는 ETF 코드를 Benchmark로 지정할 수 있어야 한다.
+사용자가 국내 주식, ETF, ETN 코드를 Benchmark로 지정할 수 있어야 한다.
 
 기존 Benchmark Comparison 기능을 가능한 한 재사용한다.
 
@@ -166,8 +166,8 @@ Benchmark와 포트폴리오 데이터의 날짜를 적절히 정렬하여 비�
 
 v1의 필수 범위는 다음과 같다.
 
-1. 국내 주식 / 국내 ETF 데이터 조회
-2. Streamlit 웹에서 6자리 종목코드 직접 입력
+1. 국내 주식 / 국내 ETF / 국내 ETN 데이터 조회
+2. Streamlit 웹에서 국내 종목코드 직접 입력
 3. 분석 기간 입력
 4. 포트폴리오 비중 입력
 5. Portfolio Performance 분석
@@ -212,14 +212,14 @@ v1의 필수 범위는 다음과 같다.
 
 다음을 만족하면 국내 시장 지원 v1 구현이 완료된 것으로 본다.
 
-- 국내 6자리 종목코드로 가격 조회가 가능하다.
-- 2개 이상의 국내 종목/ETF로 포트폴리오 분석이 가능하다.
+- 숫자 또는 영문자가 포함된 국내 종목코드로 가격 조회가 가능하다.
+- 2개 이상의 국내 주식/ETF/ETN으로 포트폴리오 분석이 가능하다.
 - 사용자가 기간과 비중을 Streamlit에서 입력할 수 있다.
 - Performance 분석이 정상 실행된다.
 - Correlation Matrix가 표시된다.
 - Max Sharpe, Minimum Volatility, Risk Parity가 정상 실행된다.
 - Efficient Frontier가 표시된다.
-- 국내 종목/ETF Benchmark와 비교가 가능하다.
+- 국내 주식/ETF/ETN Benchmark와 비교가 가능하다.
 - 관련 테스트가 통과한다.
 - Streamlit 앱이 정상적으로 시작되고 위 기능을 end-to-end로 실행할 수 있다.
 

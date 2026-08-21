@@ -18,6 +18,7 @@ from portfolio_analysis import (
     PortfolioAnalysisError,
     PortfolioOptimizer,
 )
+from portfolio_analysis.data.korean import is_valid_korean_ticker
 from portfolio_analysis.local_portfolios import (
     LocalPortfolioStore,
     LocalPortfolioStoreError,
@@ -45,7 +46,7 @@ def fetch_market_data(
 
 @st.cache_data(ttl=86400)
 def fetch_korean_security_catalog() -> pd.DataFrame:
-    """Fetch Korean stock/ETF metadata independently of price data."""
+    """Fetch Korean stock/ETF/ETN metadata independently of price data."""
     return KoreanSecurityDirectory().fetch_catalog()
 
 
@@ -89,7 +90,7 @@ def render_korean_security_search(prefix: str, title: str) -> dict | None:
         except Exception as exc:
             st.session_state[f"{prefix}_results"] = []
             st.error(f"종목 검색을 사용할 수 없습니다: {exc}")
-            st.caption("사이드바의 6자리 코드 빠른 입력을 사용할 수 있습니다.")
+            st.caption("사이드바의 국내 종목코드 빠른 입력을 사용할 수 있습니다.")
 
     records = st.session_state.get(f"{prefix}_results", [])
     if not records:
@@ -251,9 +252,9 @@ def validate_analysis_inputs(
         raise ValueError(
             f"포트폴리오 비중 합계가 100%여야 합니다 (현재 {weights.sum():.1%})."
         )
-    invalid = [ticker for ticker in tickers if not ticker.isdigit() or len(ticker) != 6]
+    invalid = [ticker for ticker in tickers if not is_valid_korean_ticker(ticker)]
     if invalid:
-        raise ValueError("국내 종목코드는 6자리 코드여야 합니다: " + ", ".join(invalid))
+        raise ValueError("올바르지 않은 국내 종목코드입니다: " + ", ".join(invalid))
     if benchmark_tickers and not np.isclose(benchmark_weights.sum(), 1.0):
         raise ValueError(
             f"Benchmark 비중 합계가 100%여야 합니다 (현재 {benchmark_weights.sum():.1%})."
@@ -261,11 +262,11 @@ def validate_analysis_inputs(
     invalid_benchmarks = [
         ticker
         for ticker in benchmark_tickers
-        if not ticker.isdigit() or len(ticker) != 6
+        if not is_valid_korean_ticker(ticker)
     ]
     if invalid_benchmarks:
         raise ValueError(
-            "국내 Benchmark 종목코드는 6자리 코드여야 합니다: "
+            "올바르지 않은 국내 Benchmark 종목코드입니다: "
             + ", ".join(invalid_benchmarks)
         )
 
@@ -362,7 +363,7 @@ def render_preset_manager(
             load_portfolio, load_benchmark, delete = st.columns(3)
             load_portfolio.button(
                 "Portfolio로",
-                use_container_width=True,
+                width="stretch",
                 on_click=load_preset_into_workspace,
                 args=(
                     document["presets"][selected_name],
@@ -374,7 +375,7 @@ def render_preset_manager(
             )
             load_benchmark.button(
                 "Benchmark로",
-                use_container_width=True,
+                width="stretch",
                 on_click=load_preset_into_workspace,
                 args=(
                     document["presets"][selected_name],
@@ -384,7 +385,7 @@ def render_preset_manager(
                     "Benchmark",
                 ),
             )
-            if delete.button("삭제", use_container_width=True):
+            if delete.button("삭제", width="stretch"):
                 try:
                     store.delete_preset(selected_name)
                     st.session_state["korean_last_message"] = (
@@ -406,7 +407,7 @@ def render_preset_manager(
             key="preset_source",
         )
         st.caption("같은 이름으로 저장하면 기존 Preset을 덮어씁니다.")
-        if st.button("Preset 저장/갱신", use_container_width=True):
+        if st.button("Preset 저장/갱신", width="stretch"):
             try:
                 if source == "Portfolio":
                     records = portfolio_records
@@ -456,7 +457,7 @@ if "local_workspace_restored" not in st.session_state:
     st.session_state["local_workspace_restored"] = True
 
 quick_input_mode = st.sidebar.checkbox(
-    "검색 장애 시 6자리 코드 빠른 입력 사용", key="korean_quick_input"
+    "검색 장애 시 국내 종목코드 빠른 입력 사용", key="korean_quick_input"
 )
 last_message = st.session_state.pop("korean_last_message", None)
 if last_message:
@@ -467,7 +468,7 @@ if quick_input_mode:
         "빠른 입력은 검색 결과 확인을 생략합니다. 검색 기능을 사용할 수 없을 때만 권장합니다."
     )
     ticker_text = st.sidebar.text_input(
-        "6자리 종목코드 (쉼표로 구분)",
+        "국내 종목코드 (쉼표로 구분)",
         "069500, 411060, 487240",
         key="korean_tickers",
     )
@@ -475,7 +476,7 @@ if quick_input_mode:
         "비중 (합계 1.0 또는 100)", "40, 30, 30", key="korean_weights"
     )
     benchmark_text = st.sidebar.text_input(
-        "Benchmark 6자리 코드 (쉼표로 구분)",
+        "Benchmark 국내 종목코드 (쉼표로 구분)",
         "069500",
         key="korean_quick_benchmark",
     )
@@ -487,7 +488,7 @@ if quick_input_mode:
 else:
     with st.sidebar.expander("포트폴리오 종목 검색·추가", expanded=True):
         selected_security = render_korean_security_search(
-            "portfolio_security", "국내 주식/ETF 검색"
+            "portfolio_security", "국내 주식/ETF/ETN 검색"
         )
         if selected_security is not None:
             if add_korean_asset("korean_selected_assets", selected_security):
@@ -874,8 +875,8 @@ with about_tab:
     st.markdown(
         """
         This application reuses the project's portfolio analysis and optimization
-        engines. FinanceDataReader supplies Korean-listed stock and ETF prices
-        using six-digit security codes.
+        engines. FinanceDataReader supplies Korean-listed stock, ETF, and ETN prices
+        using numeric or alphanumeric KRX security codes.
 
         Past performance does not guarantee future results. This tool is for
         educational use and is not investment advice.

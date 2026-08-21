@@ -54,7 +54,7 @@ def make_asset_records(
     for asset, weight in zip(assets, weights):
         records.append(
             {
-                "Code": str(asset.get("Code", "")),
+                "Code": str(asset.get("Code", "")).strip().upper(),
                 "Name": str(asset.get("Name", "")),
                 "Type": str(asset.get("Type", "")),
                 "Market": str(asset.get("Market", "")),
@@ -69,7 +69,15 @@ def split_asset_records(
 ) -> tuple[list[dict[str, str]], list[float]]:
     """Return independent UI metadata and fractional weights from stored records."""
     assets = [
-        {field: str(record[field]) for field in ASSET_FIELDS if field != "Weight"}
+        {
+            field: (
+                str(record[field]).strip().upper()
+                if field == "Code"
+                else str(record[field])
+            )
+            for field in ASSET_FIELDS
+            if field != "Weight"
+        }
         for record in records
     ]
     weights = [float(record["Weight"]) / 100.0 for record in records]

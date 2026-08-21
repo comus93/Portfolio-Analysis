@@ -132,3 +132,24 @@ def test_file_contains_only_allowed_configuration_fields(tmp_path, records):
     assert set(asset) == {"Code", "Name", "Type", "Market", "Weight"}
     forbidden = {"price", "result", "start_date", "end_date", "risk_free_rate"}
     assert not forbidden & set(asset)
+
+
+def test_alphanumeric_code_is_normalized_and_preserved_in_preset(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "portfolios.json")
+    records = make_asset_records(
+        [
+            {
+                "Code": "0137v0",
+                "Name": "KIWOOM 미국S&P500모멘텀",
+                "Type": "ETF",
+                "Market": "KRX",
+            }
+        ],
+        [1.0],
+    )
+
+    store.save_preset("문자 코드", records)
+    assets, weights = split_asset_records(store.load()["presets"]["문자 코드"])
+
+    assert assets[0]["Code"] == "0137V0"
+    assert weights == [1.0]
