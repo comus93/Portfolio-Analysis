@@ -254,3 +254,30 @@ Export → Import round-trip 시 동일한 Preset 구성과 metadata/weight가 �
 20. 기존 Preset/Last Session/영숫자 코드/분석/Allocation UI 회귀 없음
 
 관련 unit test 및 Streamlit AppTest를 보완하고, 완료 후 `ai-share/PROTOCOL.md`에 따라 결과를 `ai-share/agent-to-llm.md`에 기록한 뒤 현재 작업 브랜치 `feat/korean-market-v1`에 commit/push해줘.
+
+## Addendum — 검색 결과 테이블 가독성 개선
+
+위 요청의 기존 내용은 그대로 유지하고 아래 UX 개선을 추가한다.
+
+현재 Portfolio/Benchmark 종목명 검색 결과 표는 긴 `Name` 때문에 sidebar 내부에서 가로 스크롤이 필요해지는 경우가 있다. cell-level hover tooltip을 위해 custom component/table로 교체하지 말고, 현재 `st.dataframe`의 single-row selection UX를 유지하면서 **컬럼을 단순화하고 Name에 최대한 폭을 할당**한다.
+
+요구:
+
+- Portfolio와 Benchmark 검색 결과 모두 동일하게 적용
+- 검색 결과 사용자 표시 컬럼은 기본적으로 `Code | Name | Type`으로 단순화
+- `Market`은 검색 결과 표에서는 숨긴다. 단, 내부 security metadata에서는 기존대로 보존한다.
+- `Code`는 필요한 최소/compact 폭
+- `Type`도 필요한 최소/compact 폭
+- 남는 가로폭은 `Name`에 최대한 할당
+- Name 원문 자체를 truncate하거나 변형하지 말고 display column 폭만 최적화한다.
+- 현재의 `st.dataframe` single-row selection / 행 강조 / `[추가]` 동작은 그대로 유지한다.
+- tooltip 구현을 위해 custom HTML/component나 별도 grid dependency를 추가하지 않는다.
+- 목적은 sidebar 안에서 긴 종목명을 가능한 한 많이 바로 읽을 수 있게 하고 불필요한 가로 스크롤을 줄이는 것이다.
+
+추가 Validation:
+
+21. Portfolio 검색 결과가 `Code | Name | Type` 중심으로 표시되고 `Market`은 보이지 않음
+22. Benchmark 검색 결과도 동일
+23. Code/Type보다 Name 컬럼에 상대적으로 가장 큰 폭이 배정됨
+24. 긴 종목명이 있는 검색 결과에서도 기존보다 가로 스크롤 의존성이 줄어듦
+25. 행 선택 및 `[추가]` 동작은 기존과 동일하게 정상 작동
