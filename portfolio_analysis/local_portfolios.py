@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from copy import deepcopy
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
+from portfolio_analysis.data.korean import is_valid_korean_ticker
+
 SCHEMA_VERSION = 1
 APP_DIRECTORY = "Portfolio-Analysis"
 STORE_FILENAME = "portfolios.json"
 ASSET_FIELDS = ("Code", "Name", "Type", "Market", "Weight")
+PRESET_EXPORT_FIELDS = {"version", "name", "assets"}
 
 
 class LocalPortfolioStoreError(Exception):
@@ -82,6 +86,62 @@ def split_asset_records(
     ]
     weights = [float(record["Weight"]) / 100.0 for record in records]
     return assets, weights
+
+
+def export_preset_json(name: str, records: list[dict[str, Any]]) -> bytes:
+    """Serialize one named preset without session or analysis data."""
+    normalized_name = name.strip()
+    if not normalized_name:
+        raise ValueError("Preset 이름을 입력하세요.")
+    LocalPortfolioStore._validate_records(records, require_total=True)
+    payload = {
+        "version": SCHEMA_VERSION,
+        "name": normalized_name,
+        "assets": deepcopy(records),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def import_preset_json(data: bytes | str) -> tuple[str, list[dict[str, Any]]]:
+    """Parse and validate a portable single-preset JSON document."""
+    try:
+        text = data.decode("utf-8") if isinstance(data, bytes) else data
+        payload = json.loads(text)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Preset JSON 파일이 손상되었거나 UTF-8 형식이 아닙니다.") from exc
+
+    if not isinstance(payload, dict) or set(payload) != PRESET_EXPORT_FIELDS:
+        raise ValueError("Preset JSON 구조는 version, name, assets만 포함해야 합니다.")
+    if type(payload["version"]) is not int or payload["version"] != SCHEMA_VERSION:
+        raise ValueError(
+            f"지원하지 않는 Preset JSON version입니다: {payload['version']}"
+        )
+    name = payload["name"]
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("Preset 이름이 올바르지 않습니다.")
+    records = deepcopy(payload["assets"])
+    if isinstance(records, list):
+        for record in records:
+            if isinstance(record, dict) and isinstance(record.get("Code"), str):
+                record["Code"] = record["Code"].strip().upper()
+    LocalPortfolioStore._validate_records(records, require_total=True)
+    invalid_codes = [
+        record["Code"]
+        for record in records
+        if not is_valid_korean_ticker(record["Code"])
+    ]
+    if invalid_codes:
+        raise ValueError(
+            "Preset에 올바르지 않은 국내 종목코드가 있습니다: "
+            + ", ".join(invalid_codes)
+        )
+    return name.strip(), records
+
+
+def preset_export_filename(name: str) -> str:
+    """Return a portable download filename with unsafe characters replaced."""
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+    return f"{safe_name or 'portfolio'}.portfolio.json"
 
 
 class LocalPortfolioStore:

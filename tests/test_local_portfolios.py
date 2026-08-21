@@ -9,7 +9,10 @@ from portfolio_analysis.local_portfolios import (
     LocalPortfolioStore,
     LocalPortfolioStoreError,
     default_store_path,
+    export_preset_json,
+    import_preset_json,
     make_asset_records,
+    preset_export_filename,
     split_asset_records,
 )
 
@@ -153,3 +156,75 @@ def test_alphanumeric_code_is_normalized_and_preserved_in_preset(tmp_path):
 
     assert assets[0]["Code"] == "0137V0"
     assert weights == [1.0]
+
+
+def test_preset_export_import_round_trip_contains_only_portable_fields(records):
+    exported = export_preset_json("혼합 구성", records)
+    payload = json.loads(exported)
+
+    assert set(payload) == {"version", "name", "assets"}
+    assert payload["name"] == "혼합 구성"
+    assert payload["assets"] == records
+    assert not {
+        "last_session",
+        "analysis_result",
+        "start_date",
+        "end_date",
+        "risk_free_rate",
+    } & set(payload)
+    assert import_preset_json(exported) == ("혼합 구성", records)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"{broken", "손상"),
+        (json.dumps({"version": 2, "name": "x", "assets": []}), "version"),
+        (json.dumps({"version": 1, "name": "", "assets": []}), "이름"),
+        (
+            json.dumps(
+                {
+                    "version": 1,
+                    "name": "잘못된 코드",
+                    "assets": [
+                        {
+                            "Code": "INVALID",
+                            "Name": "invalid",
+                            "Type": "ETF",
+                            "Market": "KRX",
+                            "Weight": 100.0,
+                        }
+                    ],
+                }
+            ),
+            "종목코드",
+        ),
+    ],
+)
+def test_preset_import_rejects_malformed_or_unsupported_payload(payload, message):
+    with pytest.raises(ValueError, match=message):
+        import_preset_json(payload)
+
+
+def test_preset_export_filename_replaces_unsafe_characters():
+    assert preset_export_filename('주식/금:*?') == "주식_금___.portfolio.json"
+
+
+def test_preset_import_normalizes_alphanumeric_code_case():
+    payload = {
+        "version": 1,
+        "name": "문자 코드",
+        "assets": [
+            {
+                "Code": "0137v0",
+                "Name": "KIWOOM 미국S&P500모멘텀",
+                "Type": "ETF",
+                "Market": "KRX",
+                "Weight": 100.0,
+            }
+        ],
+    }
+
+    _, records = import_preset_json(json.dumps(payload))
+
+    assert records[0]["Code"] == "0137V0"
