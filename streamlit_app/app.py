@@ -50,11 +50,6 @@ def fetch_korean_security_catalog() -> pd.DataFrame:
     return KoreanSecurityDirectory().fetch_catalog()
 
 
-def security_label(security: dict) -> str:
-    """Format a security so code and name are always visible together."""
-    return f"{security['Code']} · {security['Name']} · {security['Type']}"
-
-
 def reset_korean_security_search(prefix: str) -> None:
     """Clear search widgets and results after an explicit add action."""
     st.session_state.pop(f"{prefix}_results", None)
@@ -109,8 +104,6 @@ def render_korean_security_search(prefix: str, title: str) -> dict | None:
 
     selected_rows = event.selection.rows if event.selection else []
     selected_security = records[selected_rows[0]] if selected_rows else None
-    if selected_security:
-        st.success(f"선택됨: {security_label(selected_security)}")
 
     if st.button("추가", key=f"{prefix}_add", icon=":material/add:"):
         if selected_security is None:
@@ -195,6 +188,8 @@ def render_selected_assets(
             args=(list_key, weight_prefix, asset["Code"]),
         )
 
+    total_percentage = round(sum(weight_percentages), 2)
+    st.sidebar.caption(f"현재 비중 합계: {total_percentage:g}%")
     return selected_assets, np.array(weight_percentages, dtype=float) / 100.0
 
 
@@ -492,9 +487,6 @@ else:
         )
         if selected_security is not None:
             if add_korean_asset("korean_selected_assets", selected_security):
-                st.session_state["korean_last_message"] = (
-                    f"{security_label(selected_security)} 추가됨"
-                )
                 reset_korean_security_search("portfolio_security")
                 st.rerun()
             else:
@@ -513,9 +505,6 @@ else:
         )
         if selected_benchmark is not None:
             if add_korean_asset("korean_selected_benchmark_assets", selected_benchmark):
-                st.session_state["korean_last_message"] = (
-                    f"{security_label(selected_benchmark)} 추가됨"
-                )
                 reset_korean_security_search("benchmark_security")
                 st.rerun()
             else:
@@ -672,11 +661,13 @@ if st.sidebar.button("분석", type="primary", icon=":material/analytics:"):
 
         st.session_state["analysis_result"] = {
             "data": data,
+            "tickers": tickers,
             "weights": weights,
             "portfolio": portfolio,
             "metrics": metrics,
             "optimizer": optimizer,
             "display_labels": build_display_labels(tickers, display_names),
+            "display_names": display_names,
             "benchmark_tickers": benchmark_tickers,
             "benchmark_weights": benchmark_weights,
             "benchmark_labels": benchmark_labels,
@@ -698,11 +689,22 @@ if analysis_result is None:
     st.stop()
 
 data = analysis_result["data"]
+tickers = analysis_result.get("tickers", list(data.columns))
 weights = analysis_result["weights"]
 portfolio = analysis_result["portfolio"]
 metrics = analysis_result["metrics"]
 optimizer = analysis_result["optimizer"]
 display_labels = analysis_result["display_labels"]
+display_names = analysis_result.get("display_names", {})
+if not display_names:
+    display_names = {
+        ticker: (
+            display_labels[ticker].removeprefix(f"{ticker} · ")
+            if display_labels[ticker] != ticker
+            else "-"
+        )
+        for ticker in tickers
+    }
 benchmark_tickers = analysis_result["benchmark_tickers"]
 benchmark_weights = analysis_result["benchmark_weights"]
 benchmark_labels = analysis_result["benchmark_labels"]
@@ -738,12 +740,22 @@ with performance_tab:
 
     allocation_column, return_column = st.columns([1, 2])
     with allocation_column:
+        st.subheader("Allocation")
         allocation = px.pie(
             values=weights,
             names=[display_labels[ticker] for ticker in tickers],
             hole=0.4,
         )
-        allocation.update_layout(margin=dict(t=20, b=20, l=0, r=0))
+        allocation.update_traces(
+            showlegend=False,
+            textinfo="percent",
+            hovertemplate="%{label}<br>비중: %{percent}<extra></extra>",
+        )
+        allocation.update_layout(
+            showlegend=False,
+            height=380,
+            margin=dict(t=20, b=20, l=0, r=0),
+        )
         st.plotly_chart(allocation)
     with return_column:
         cumulative = portfolio.calculate_cumulative_returns()
@@ -754,6 +766,22 @@ with performance_tab:
         )
         figure.update_traces(name="Portfolio", showlegend=True)
         st.plotly_chart(figure)
+
+    allocation_frame = pd.DataFrame(
+        {
+            "Code": tickers,
+            "Name": [display_names.get(ticker, "-") for ticker in tickers],
+            "Weight (%)": weights * 100.0,
+        }
+    )
+    st.subheader("Allocation details")
+    st.dataframe(
+        allocation_frame,
+        hide_index=True,
+        column_config={
+            "Weight (%)": st.column_config.NumberColumn(format="%.2f%%"),
+        },
+    )
 
     st.subheader("Aligned Price Data")
     st.line_chart((data / data.iloc[0]).rename(columns=display_labels))
