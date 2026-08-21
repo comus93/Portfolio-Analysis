@@ -1,208 +1,256 @@
 # AI Share
 
 state: active
-id: 20260821T120900+0900-llm
-created_at: 2026-08-21T12:09:00+09:00
+id: 20260821T125500+0900-llm
+created_at: 2026-08-21T12:55:00+09:00
 type: request
-reply_to: 20260821T101131+0900-agent
+reply_to: 20260821T123324+0900-agent
 
 ## Context
 
-직전 UAT 마이너 UX 개선 결과는 확인했다. 이번 요청은 그 변경을 유지하면서, 현재 sidebar의 실제 배치와 사용자 작업 흐름을 기준으로 **Portfolio Preset UX를 재구성**하는 후속 작업이다.
+직전 Portfolio/Benchmark Preset workspace UX 재구성 결과를 확인했다. 이번 요청은 그 구조를 유지하면서 sidebar 사용 흐름을 더 단순화하는 후속 UAT 개선이다.
 
-현재 문제는 Preset 관리 UI가 Portfolio/Benchmark 종목 구성을 모두 끝낸 뒤 sidebar 하단에 위치하여 사용 흐름이 `종목 구성 → 아래로 이동 → Preset 저장/불러오기`가 되는 점이다.
+핵심은 다음 세 가지다.
 
-사용자 관점의 자연스러운 흐름은 다음과 같다.
+1. 별도 `검색 장애 시 국내 종목코드 빠른 입력 사용` 모드를 완전히 제거하고, 기존 Portfolio/Benchmark 검색 입력창 하나가 종목명 검색과 종목코드 직접 입력을 모두 처리하게 한다.
+2. `[분석]` 버튼을 sidebar 최하단이 아니라 `Portfolio Analyzer` 타이틀 바로 아래 최상단으로 이동한다.
+3. 기존 `Preset 관리` 영역을 `[Delete] [Export] [Import]` 중심으로 확장한다.
 
-```text
-Preset 선택 또는 새 구성 시작
-→ 현재 구성 확인/편집
-→ 종목 검색·추가·삭제·비중 변경
-→ 저장 또는 다른 이름으로 저장
-→ 분석
-```
-
-또한 현재 비중 합계는 구현되어 있으나 각 종목 목록의 **맨 아래**에 표시되어, 종목이 많으면 사용자가 거의 보지 못한다. 합계는 구성 set의 상단에 보여야 한다.
-
-AS-IS 저장 구조(`LocalPortfolioStore`, Named Preset, Last Session)는 최대한 재사용하고, 분석 엔진/가격 데이터/최적화 로직은 변경하지 않는다.
+분석 엔진/가격 데이터/최적화 구조는 변경하지 말고 기존 session state, `LocalPortfolioStore`, 검색/종목 metadata 구조를 최대한 재사용한다.
 
 ## Message
 
-### 1. Preset을 sidebar 하단 관리 기능이 아니라 각 작업공간의 상단 컨트롤로 재배치
+### 1. 별도 빠른 입력 mode 완전 제거
 
-현재 하나의 `Portfolio Preset` expander 안에서 `Portfolio로`, `Benchmark로`를 고르는 구조를 제거/재구성한다.
-
-Portfolio와 Benchmark가 각각 자기 작업영역 상단에 Preset selector를 갖도록 한다.
-
-개념 배치:
+현재의 다음 UI와 관련 분기 흐름을 제거한다.
 
 ```text
-PORTFOLIO
-Preset [ A 포트폴리오 ▼ ]
-[새 구성] [저장] [다른 이름으로 저장]
-현재 비중 합계: 100%
-[포트폴리오 종목 검색·추가]
-종목 목록...
-
-BENCHMARK
-Preset [ S&P+금 ▼ ]
-[새 구성] [저장] [다른 이름으로 저장]
-현재 비중 합계: 100%
-[Benchmark 검색·추가]
-종목 목록...
+검색 장애 시 국내 종목코드 빠른 입력 사용
 ```
 
-정확한 widget 한 줄 배치는 Streamlit sidebar의 좁은 고정 폭을 고려해 적절히 조정해도 된다. 중요한 것은 **Preset control이 해당 구성보다 위에 위치**하고, 일상적인 작업 버튼이 과도하게 한 줄에 압축되지 않는 것이다.
+즉 사용자가 checkbox로 별도 mode를 켜서 Portfolio/Benchmark 코드와 비중을 text input으로 입력하는 UX는 더 이상 노출하지 않는다.
 
-### 2. Portfolio/Benchmark는 같은 Preset library를 공유하되 적용 대상은 UI 위치로 결정
+이 기능을 없애는 대신 기존 Portfolio/Benchmark의 `종목코드 또는 종목명` 검색 입력창이 직접 코드 입력까지 처리한다.
 
-기존처럼 Preset을 선택한 뒤 `Portfolio로` / `Benchmark로` 버튼을 다시 누르게 하지 않는다.
+### 2. 기존 검색창 하나에서 이름 검색 / 단일 코드 / 복수 코드 입력을 자동 판별
 
-- Portfolio 영역의 Preset dropdown에서 선택하면 해당 Preset을 **Portfolio workspace에 자동 적용**
-- Benchmark 영역의 Preset dropdown에서 선택하면 해당 Preset을 **Benchmark workspace에 자동 적용**
-- 두 dropdown은 동일한 Named Preset library를 공유
+Portfolio와 Benchmark 검색창 모두 동일하게 동작한다.
 
-즉 적용 대상 선택을 별도 버튼으로 묻지 않고 **어느 workspace의 dropdown을 조작했는지**로 결정한다.
-
-선택 변경 때만 load되도록 구현하여 Streamlit rerun마다 같은 Preset이 반복 적용되어 사용자의 편집값이 덮어써지는 문제가 없게 한다.
-
-Preset load만으로 분석을 자동 실행하지 않는 기존 원칙은 유지한다. 필요하면 이전 `analysis_result`는 기존 정책대로 clear한다.
-
-### 3. `새 구성`은 해당 workspace만 비우는 동작
-
-Portfolio의 `[새 구성]`:
-
-- 현재 Portfolio 종목 전체 제거
-- Portfolio weight state 제거
-- Portfolio 검색 query/results/selection 등 현재 구성에 종속된 임시 상태 정리
-- 현재 Portfolio가 특정 Preset을 편집 중이라는 association 해제
-- 기존 분석 결과가 현재 입력과 불일치하지 않도록 `analysis_result` clear
-- **Benchmark는 건드리지 않음**
-- **저장된 Named Preset은 절대 삭제하지 않음**
-
-Benchmark의 `[새 구성]`도 정확히 반대 방향으로 동일하게 동작한다.
-
-사용자가 실수로 현재 구성을 날리는 것을 막기 위해 sidebar UX를 과도하게 복잡하게 하지 않는 범위에서 간단한 confirmation을 제공해도 된다. 다만 Preset 자체 삭제와 혼동되지 않도록 `새 구성`은 어디까지나 workspace clear여야 한다.
-
-Last Session은 기존 의미대로 현재 workspace 상태를 자동 보존한다. 새 구성 후 빈 상태가 Last Session에 반영되는 것은 정상이다.
-
-### 4. 기존 Preset을 일부 수정해 새 Portfolio를 만드는 흐름은 Save / Save As로 해결
+#### A. 일반 종목명/검색어 입력
 
 예:
 
 ```text
-Preset A 선택
-→ Portfolio에 자동 load
-→ 종목/비중 일부 수정
-→ 다른 이름으로 저장
-→ Preset B 생성
+삼성전자
+KODEX 200
+은액티브
 ```
 
-요구 동작:
-
-- `[저장]`
-  - 현재 workspace가 기존 Preset A를 기준으로 열려 있다면 A를 현재 구성으로 덮어씀
-- `[다른 이름으로 저장]`
-  - 새 이름을 입력받아 새로운 Preset B로 저장
-  - 원본 Preset A는 유지
-- `[새 구성]` 상태처럼 active Preset이 없는 workspace에서 `[저장]`을 누르면 새 이름 입력이 필요한 신규 저장 흐름으로 처리
-
-현재처럼 sidebar에 항상 `Preset 이름` input과 `저장할 현재 구성 Portfolio/Benchmark` radio를 노출하지 않는다.
-
-이름 입력은 신규 저장/다른 이름으로 저장이 필요할 때만 자연스럽게 노출하는 compact UX로 구성한다. 구현 방식(dialog/popover/조건부 input 등)은 현재 Streamlit 버전과 sidebar 제약에 맞춰 단순하게 판단한다.
-
-별도의 복잡한 version 관리 기능은 만들지 않는다.
-
-### 5. Preset 삭제는 주 작업 흐름에서 한 단계 낮춰도 됨
-
-Preset 삭제는 빈도가 낮고 destructive한 동작이다.
-
-기존처럼 selector 옆에 항상 중요한 버튼들과 함께 강하게 노출할 필요가 없다.
-
-- compact한 `Preset 관리` expander 등 하위 위치로 이동 가능
-- 삭제 시 저장된 Named Preset만 삭제
-- 현재 workspace 자체를 자동 clear할지 여부는 예측 가능한 방향으로 처리하고 테스트할 것
-
-핵심 일상 작업은 `선택 / 새 구성 / 저장 / 다른 이름으로 저장`이다.
-
-### 6. 현재 비중 합계 표시 위치 수정
-
-직전 구현에서 다음 합계 계산 자체는 정상이다.
+기존 UX를 유지한다.
 
 ```text
-현재 비중 합계: N%
+검색 → 결과 표 → 사용자가 행 명시적 선택 → 추가
 ```
 
-하지만 지금은 종목들을 전부 렌더링한 뒤 목록 하단에 표시되어 종목 수가 많으면 보이지 않는다.
+첫 검색 결과를 자동 선택하거나 자동 추가하지 않는다.
 
-Portfolio와 Benchmark 모두 **각 구성 set의 상단, 종목 목록보다 위**에 표시한다.
+#### B. 정확한 국내 종목코드 1개 입력
 
 예:
 
 ```text
+005930
+0137V0
+0172V0
+```
+
+입력 전체가 유효한 국내 종목코드 1개로 판별되면 사용자가 이미 종목을 명시적으로 지정한 것으로 보고 검색 결과 선택 단계를 생략하여 해당 workspace에 바로 추가한다.
+
+- Portfolio 검색창이면 Portfolio에 추가
+- Benchmark 검색창이면 Benchmark에 추가
+- 숫자 코드와 영숫자 코드를 모두 지원
+- 대소문자 normalization 등 기존 국내 코드 처리 규칙 재사용
+- 중복 종목은 중복 추가하지 않음
+- 성공 후 입력/search result state는 기존 add UX와 동일하게 정리
+
+#### C. 쉼표로 구분한 복수 종목코드 입력
+
+예:
+
+```text
+005930,069500,0137V0,0172V0
+```
+
+모든 token이 유효한 국내 종목코드이면 batch direct-add로 처리한다.
+
+- 입력 순서 보존
+- 이미 workspace에 있는 코드는 중복 추가하지 않음
+- 유효한 신규 코드들은 한 번에 추가
+- 기존 문자 포함 KRX 코드 규칙 지원
+
+이번 범위에서는 다음과 같은 이름+코드 혼합 batch 입력까지 일반화하지 않는다.
+
+```text
+삼성전자,069500,금현물
+```
+
+입력 전체가 코드 리스트가 아니면 기존 일반 검색으로 처리하는 단순한 규칙을 사용한다.
+
+### 3. 직접 코드 입력은 별도 UX 안내를 표시하지 않음
+
+이 기능을 설명하는 별도 caption, warning, help text, 사용법 문구를 추가하지 않는다.
+
+사용자는 기존 `종목코드 또는 종목명` 입력창을 그대로 사용한다.
+
+검색 장애 시에도 정확한 종목코드 직접 입력 경로가 기존 빠른 입력 fallback 역할을 최대한 대체하도록 한다.
+
+가능하면:
+
+- catalog 조회 가능 시 Code에 대응하는 Name/Type/Market metadata를 기존 catalog에서 보강
+- catalog/search source가 일시적으로 불가능하더라도 정확한 유효 코드 자체는 기존 `KoreanDataLoader` 가격 조회 경로로 전달 가능한 fallback을 유지
+
+단, 이 목적 때문에 새로운 종목 master/별도 provider를 만들지 않는다. 기존 구조 안에서 최소 구현한다.
+
+### 4. `[분석]` 버튼을 sidebar 최상단으로 이동
+
+현재 `[분석]` 버튼을 누르려면 긴 Portfolio/Benchmark 구성과 Analysis period 아래까지 scroll해야 한다.
+
+sidebar 배치를 다음처럼 변경한다.
+
+```text
+Portfolio Analyzer
+
+[ 분석 ]
+
 PORTFOLIO
 Preset ...
-현재 비중 합계: 85%
-
-종목1 40%
-종목2 45%
 ...
 ```
 
-요구:
+즉 기존 빠른 입력 mode UI가 있던 상단 위치에 `[분석]` 버튼을 둔다.
 
-- 추가 즉시 반영
-- 삭제 즉시 반영
-- 비중 변경 즉시 반영
-- 분석 실행 불필요
-- 100%가 아니어도 현재 합계를 그대로 보여줌
+중요:
 
-직전 구현의 실시간 계산 로직을 재사용하고 **표시 위치만 요구에 맞게 수정**하는 것을 우선한다.
+- sidebar의 분석 버튼은 하나만 존재해야 함
+- 하단 기존 분석 버튼은 제거
+- 버튼 UI를 위에서 먼저 렌더링하되 실제 분석 실행은 Portfolio/Benchmark/date/risk-free 등 모든 현재 입력 state가 준비된 뒤 기존 validation/분석 로직을 그대로 실행하도록 구성
+- 예: 상단에서 `analyze_requested = st.sidebar.button(...)`만 받고 아래에서 `if analyze_requested:` 처리하는 방식 가능
+- `[분석]` 수동 실행 원칙은 그대로 유지
 
-### 7. 빠른 입력 warning 문구 삭제
+### 5. `Preset 관리` 영역을 `[Delete] [Export] [Import]`로 구성
 
-`검색 장애 시 국내 종목코드 빠른 입력 사용`을 켰을 때 표시되는 다음 warning은 삭제한다.
+직전 구현에서 하위 관리 영역으로 내려간 `Preset 관리`를 유지하되 기능을 다음처럼 정리한다.
 
 ```text
-빠른 입력은 검색 결과 확인을 생략합니다. 검색 기능을 사용할 수 없을 때만 권장합니다.
+Preset 관리
+[Delete] [Export] [Import]
 ```
 
-체크박스 label 자체가 용도를 충분히 설명하므로 별도 warning은 불필요하다.
+좁은 sidebar에서 실제 widget 폭에 따라 1행/2행 배치는 적절히 판단해도 되지만, 기능 명칭은 단순하게 유지한다.
 
-검색 실패 시 사용자에게 실제 오류/대체 경로를 알려주는 error/warning은 유지한다.
+#### Delete
 
-### 8. 유지해야 할 기존 동작
+- 기존 `선택한 Preset 삭제` 기능의 동작은 그대로 유지
+- 버튼/액션 명칭만 `Delete`로 단순화
+- 선택된 관리 대상 Preset을 삭제
+- active workspace 처리 정책도 직전 구현 결과를 유지
 
-- Named Preset 저장 파일 형식/로컬 저장 위치는 가능한 한 유지
-- 동일 이름 저장 시 overwrite 정책 유지
-- Last Session 자동 저장/자동 복원 유지
-- Portfolio와 Benchmark는 동일 Preset library 공유
+#### Export
+
+- `Preset 관리`에서 선택한 Preset 하나를 JSON 파일로 로컬 다운로드 가능하게 한다.
+- 앱이 이메일/메신저/클라우드 공유 자체를 담당하지 않는다.
+- 사용자가 다운로드한 JSON을 원하는 수단으로 전달한다.
+
+Export JSON은 **Preset 구성 정보만** 포함한다.
+
+포함:
+
+- format/version 식별용 `version` (현재 `1` 권장)
+- Preset `name`
+- assets
+  - Code
+  - Name
+  - Type
+  - Market
+  - Weight
+
+제외:
+
+- 가격 데이터
+- 분석 결과
+- 차트
+- Start/End date
+- Risk-free rate
+- Benchmark 계산 결과
+- Last Session
+
+현재 LocalPortfolioStore의 asset record 구조를 최대한 재사용하고 별도 복잡한 export 모델을 만들지 않는다.
+
+다운로드 파일명은 사용자에게 식별 가능한 형태로 한다. 예:
+
+```text
+주식70금30.portfolio.json
+```
+
+파일명 unsafe character 처리는 필요한 최소 범위로 한다.
+
+#### Import
+
+- 사용자가 Export된 `.json` 파일을 업로드할 수 있게 한다.
+- 파일을 읽어 schema/version/name/assets를 검증한다.
+- 정상 파일이면 로컬 Named Preset library에 등록한다.
+- Import만으로 Portfolio나 Benchmark workspace에 자동 적용하지 않는다.
+- 등록 후 기존 Portfolio/Benchmark Preset selector에서 일반 Preset과 동일하게 선택해 사용한다.
+
+최소 validation:
+
+- 지원하는 version인지
+- name이 유효한지
+- assets가 올바른 list인지
+- 각 asset의 Code/Weight 및 필요한 metadata 구조가 유효한지
+- 국내 영숫자 종목코드 보존
+- malformed/손상 JSON이 앱 전체를 중단시키지 않고 이해 가능한 오류로 처리
+
+Export → Import round-trip 시 동일한 Preset 구성과 metadata/weight가 보존되어야 한다.
+
+동일 이름 Preset을 Import할 경우에는 현재 Named Preset의 동일 이름 저장 정책과 일관되게 overwrite 처리하되, 기존 저장 계층의 정책을 재사용한다.
+
+### 6. 유지해야 할 기존 동작
+
+- Portfolio/Benchmark 각각의 상단 Preset selector
+- `새 구성 / 저장 / 다른 이름으로 저장`
+- 동일 Preset library 공유
+- Last Session 자동 저장/복원
+- 비중 합계의 구성 상단 실시간 표시
+- 종목명 검색 시 명시적 결과 행 선택
+- 문자 포함 국내 주식/ETF/ETN 코드 지원
 - Preset load만으로 자동 분석하지 않음
-- 종목 검색 → 명시적 행 선택 → 추가 UX 유지
-- 문자 포함 국내 주식/ETF/ETN 종목코드 지원 유지
-- 수동 `[분석]` 실행 원칙 유지
-- 직전 요청의 Pie legend 제거 + Allocation details 표 유지
+- Performance Pie legend 제거 + Allocation details 표
+- 분석 엔진/가격 loader/optimization/Benchmark 계산 AS-IS
 
 ## Validation
 
-최소 다음 사용자 흐름을 실제 Streamlit AppTest/UAT 수준으로 확인한다.
+최소 다음을 실제 Streamlit 흐름과 테스트로 확인한다.
 
-1. Portfolio Preset selector가 Portfolio 구성보다 위에 보임
-2. Benchmark Preset selector가 Benchmark 구성보다 위에 보임
-3. 동일 Preset A를 Portfolio selector에서 고르면 Portfolio에 자동 load
-4. 동일 Preset A를 Benchmark selector에서 고르면 Benchmark에 자동 load
-5. 선택 후 rerun/비중 수정 시 Preset이 반복 load되어 편집 내용이 되돌아가지 않음
-6. Portfolio `[새 구성]` 시 Portfolio만 clear되고 Benchmark/Named Preset은 유지
-7. Benchmark `[새 구성]`도 반대로 동일 동작
-8. A load → 일부 수정 → `[저장]` 시 A 갱신
-9. A load → 일부 수정 → `[다른 이름으로 저장]` 시 B 신규 생성, A 유지
-10. 새 구성 → 종목 구성 → 신규 저장 가능
-11. Portfolio/Benchmark 비중 합계가 각각 종목 목록 **상단**에 보이고 추가/삭제/변경 즉시 갱신
-12. 빠른 입력 mode에서 지정 warning 문구가 더 이상 나오지 않음
-13. Last Session 저장/복원 정상
-14. Preset load/save/new 구성만으로 분석 자동 실행되지 않음
-15. 기존 문자 포함 종목코드/검색/분석 및 Performance Allocation UI 회귀 없음
+1. `검색 장애 시 국내 종목코드 빠른 입력 사용` checkbox/UI가 완전히 사라짐
+2. Portfolio 검색창에 `005930` 입력 시 직접 추가 가능
+3. Portfolio 검색창에 `0137V0` 같은 영숫자 코드 직접 추가 가능
+4. Portfolio 검색창에 `005930,069500,0137V0` 입력 시 batch 추가 가능
+5. Benchmark 검색창에서도 동일하게 단일/복수 코드 direct-add 가능
+6. 일반 종목명 입력은 기존 검색 결과 → 명시적 행 선택 → 추가 흐름 유지
+7. direct code 기능에 대한 별도 안내 caption/warning이 표시되지 않음
+8. 중복 코드 batch 입력/기존 종목 중복 시 중복 추가 없음
+9. 검색/catalog 장애 상황에서 정확한 코드 직접 입력 fallback이 가능한 범위에서 유지됨
+10. `[분석]` 버튼이 `Portfolio Analyzer` 타이틀 바로 아래에 보임
+11. sidebar 하단의 기존 분석 버튼은 없어 분석 버튼이 하나만 존재
+12. 상단 분석 버튼 클릭 시 기존 input validation과 분석이 정상 실행
+13. `Preset 관리`에 `Delete`, `Export`, `Import` 제공
+14. Delete는 기존 선택 Preset 삭제 동작 유지
+15. Export한 JSON에 version/name/assets만 필요한 구조로 포함되고 분석 데이터는 없음
+16. Export 파일을 Import하면 Named Preset library에 동일 구성이 복원됨
+17. Import가 workspace에 자동 적용되거나 분석을 자동 실행하지 않음
+18. malformed/지원하지 않는 JSON Import가 앱 전체를 죽이지 않음
+19. 동일 이름 Import overwrite가 기존 정책과 일관되게 동작
+20. 기존 Preset/Last Session/영숫자 코드/분석/Allocation UI 회귀 없음
 
-변경은 sidebar UX와 Preset workspace orchestration 중심으로 최소화하고, 분석 엔진 리팩터링이나 새로운 저장 프레임워크는 만들지 않는다.
-
-완료 후 `ai-share/PROTOCOL.md`에 따라 결과를 `ai-share/agent-to-llm.md`에 기록하고 현재 작업 브랜치 `feat/korean-market-v1`에 commit/push해줘.
+관련 unit test 및 Streamlit AppTest를 보완하고, 완료 후 `ai-share/PROTOCOL.md`에 따라 결과를 `ai-share/agent-to-llm.md`에 기록한 뒤 현재 작업 브랜치 `feat/korean-market-v1`에 commit/push해줘.
