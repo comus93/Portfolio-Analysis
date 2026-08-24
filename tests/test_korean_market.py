@@ -70,16 +70,22 @@ class TestKoreanDataLoader:
 
     def test_reports_ticker_and_provider_error(self):
         def failing_reader(ticker, start, end):
-            raise RuntimeError("provider unavailable")
+            raise RuntimeError("FDR unavailable")
+
+        def failing_yahoo(*args, **kwargs):
+            raise RuntimeError("Yahoo unavailable")
 
         loader = KoreanDataLoader(
             ["069500"],
             "2024-01-01",
             "2024-02-01",
             reader=failing_reader,
+            yahoo_downloader=failing_yahoo,
         )
 
-        with pytest.raises(DataError, match="069500.*provider unavailable"):
+        with pytest.raises(
+            DataError, match="069500.*FDR unavailable.*Yahoo unavailable"
+        ):
             loader.fetch_data()
 
     def test_requires_close_prices(self):
@@ -90,10 +96,59 @@ class TestKoreanDataLoader:
             reader=lambda ticker, start, end: pd.DataFrame(
                 {"Open": [100]}, index=pd.to_datetime(["2024-01-02"])
             ),
+            yahoo_downloader=lambda *args, **kwargs: pd.DataFrame(),
         )
 
-        with pytest.raises(DataError, match="Close column"):
+        with pytest.raises(DataError, match="Close or Adj Close"):
             loader.fetch_data()
+
+    def test_falls_back_to_yahoo_when_fdr_fails(self):
+        requested = []
+
+        def failing_reader(ticker, start, end):
+            raise RuntimeError("FDR unavailable")
+
+        def yahoo_downloader(ticker, **kwargs):
+            requested.append(ticker)
+            return pd.DataFrame(
+                {"Close": [100, 101]},
+                index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            )
+
+        data = KoreanDataLoader(
+            ["069500"],
+            "2024-01-01",
+            "2024-02-01",
+            reader=failing_reader,
+            yahoo_downloader=yahoo_downloader,
+        ).fetch_data()
+
+        assert requested == ["069500.KS"]
+        assert list(data.columns) == ["069500"]
+        assert data.iloc[-1, 0] == 101
+
+    def test_falls_back_to_yahoo_kosdaq_suffix_after_krx_suffix_fails(self):
+        requested = []
+
+        def yahoo_downloader(ticker, **kwargs):
+            requested.append(ticker)
+            if ticker.endswith(".KS"):
+                return pd.DataFrame()
+            return pd.DataFrame(
+                {"Close": [100, 102]},
+                index=pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            )
+
+        data = KoreanDataLoader(
+            ["069500"],
+            "2024-01-01",
+            "2024-02-01",
+            reader=lambda *args: pd.DataFrame(),
+            yahoo_downloader=yahoo_downloader,
+        ).fetch_data()
+
+        assert requested == ["069500.KS", "069500.KQ"]
+        assert data.iloc[-1, 0] == 102
 
 
 def test_yahoo_loader_preserves_requested_ticker_order():
